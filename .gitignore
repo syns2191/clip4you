@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Project cache
+.cache/
+
+# Output
+output/
+
+# YouTube OAuth
+client_secret.json
+.youtube_token.json
+
+# Claude
+.claude/
+
+# Music (large files, download separately)
+music/*.mp3
+music/*.wav
+music/*.flac
+!music/.gitkeep
