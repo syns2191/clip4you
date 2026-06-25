@@ -15,9 +15,11 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from .config import settings
-from .render import FFMPEG, reframe_vertical
-from .narration import generate_narration, POPULAR_VOICES
-from .imagegen import generate_scene_image
+from .render import FFMPEG, reframe_vertical, burn_captions
+from .narration import generate_narration, generate_silence, is_silent_scene, SentenceTiming, POPULAR_VOICES, MOOD_VOICE_SETTINGS
+from .transcribe import transcribe, transcribe_audio, Word
+from .captions import build_ass
+from .imagegen import generate_scene_image, generate_scene_video
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 
@@ -63,6 +65,8 @@ class Scene:
     voice: Optional[str] = None
     rate: Optional[str] = None
     mood: Optional[str] = None
+    timings: List[SentenceTiming] = field(default_factory=list)
+    words: List[Word] = field(default_factory=list)
 
 
 def _parse_timestamp(ts: str) -> float:
@@ -419,22 +423,18 @@ def _download_pexels_video(query: str, output_path: str) -> bool:
 
 
 def _image_to_video(image_path: str, duration: float, output_path: str) -> None:
-    """Convert a static image to a 9:16 video without stretching.
+    """Convert a static image to a video without stretching.
     Uses blurred background fill + centered image with slow Ken Burns zoom."""
-    # Strategy: place image centered on a 1080x1920 canvas with blurred version as background
-    # Then apply slow zoom for visual interest
+    w = settings.vertical_width
+    h = settings.vertical_height
     frames = int(duration * 25)
     vf = (
-        # Create blurred background from the image, scaled to fill 1080x1920
         f"split[bg][fg];"
-        f"[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
-        f"crop=1080:1920,boxblur=25:5[blurred];"
-        # Scale foreground to fit within 1080x1920 without stretching
-        f"[fg]scale=1080:1920:force_original_aspect_ratio=decrease[scaled];"
-        # Overlay centered
+        f"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h},boxblur=25:5[blurred];"
+        f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[scaled];"
         f"[blurred][scaled]overlay=(W-w)/2:(H-h)/2[composed];"
-        # Slow zoom for visual interest
-        f"[composed]zoompan=z='min(zoom+0.0008,1.15)':d={frames}:s=1080x1920:fps=25,"
+        f"[composed]zoompan=z='min(zoom+0.0008,1.15)':d={frames}:s={w}x{h}:fps=25,"
         f"format=yuv420p"
     )
     cmd = [
@@ -449,10 +449,9 @@ def _image_to_video(image_path: str, duration: float, output_path: str) -> None:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        # Fallback: simple scale without stretch (black bars)
         vf_simple = (
-            f"scale=1080:1920:force_original_aspect_ratio=decrease,"
-            f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,"
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
             f"format=yuv420p"
         )
         cmd2 = [
@@ -522,6 +521,29 @@ def _concat_scenes(scene_videos: List[str], output_path: str) -> None:
     os.unlink(list_file)
     if result.returncode != 0:
         raise RuntimeError(f"Concat failed:\n{result.stderr[-1000:]}")
+
+
+def _concat_scenes_with_audio(scene_videos: List[str], output_path: str) -> None:
+    """Concatenate scene videos keeping their audio tracks (for Veo)."""
+    if len(scene_videos) == 1:
+        shutil.copy2(scene_videos[0], output_path)
+        return
+
+    list_file = output_path + ".txt"
+    with open(list_file, "w") as f:
+        for path in scene_videos:
+            f.write(f"file '{os.path.abspath(path)}'\n")
+    cmd = [
+        FFMPEG, "-y", "-f", "concat", "-safe", "0",
+        "-i", list_file,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    os.unlink(list_file)
+    if result.returncode != 0:
+        raise RuntimeError(f"Concat with audio failed:\n{result.stderr[-1000:]}")
 
 
 def _concat_with_transitions(scene_videos: List[str], output_path: str, fade_duration: float = 0.8) -> None:
@@ -675,6 +697,8 @@ def create_story(
     music_volume: float = 0.3,
     auto_music: bool = True,
     visuals: str = "download",
+    art_style: str = "",
+    image_category: str = "",
 ) -> str:
     """Create a short narrated video from a script.
 
@@ -687,86 +711,184 @@ def create_story(
     has_timeline = any(s.duration > 0 for s in scenes)
     print(f"   {len(scenes)} scenes identified" + (" (with timeline)" if has_timeline else ""))
 
-    # Generate TTS per scene
-    print("-> Generating narration audio...")
-    voice_name = POPULAR_VOICES.get(voice, voice)
-    # Use slower rate for calm/warm voices, or user override
-    if voice_rate:
-        tts_rate = voice_rate
-    elif voice in ("warm", "caring", "storyteller", "dark", "tension"):
-        tts_rate = "-25%"
-    else:
-        tts_rate = "-15%"
-    print(f"   Voice: {voice_name} | Rate: {tts_rate}")
+    use_veo_audio = (visuals == "veo")
 
     scene_audios = []
     with tempfile.TemporaryDirectory() as tmp:
-        for i, scene in enumerate(scenes):
-            audio_path = os.path.join(tmp, f"scene_{i:02d}.mp3")
+        if use_veo_audio:
+            print("-> Skipping TTS (Veo generates voice + sound effects)...")
+            # Still need scene durations from timeline or defaults
+            for i, scene in enumerate(scenes):
+                if scene.duration <= 0:
+                    scene.duration = 8.0  # Veo generates 5-8s clips
+                print(f"   Scene {i+1}: {scene.duration:.1f}s - \"{scene.text[:50]}\"")
+        else:
+            # Generate TTS per scene
+            print("-> Generating narration audio...")
+            voice_name = POPULAR_VOICES.get(voice, voice)
+            if voice_rate:
+                tts_rate = voice_rate
+            elif voice in ("warm", "caring", "storyteller", "dark", "tension"):
+                tts_rate = "-25%"
+            else:
+                tts_rate = "-15%"
+            print(f"   Voice: {voice_name} | Rate: {tts_rate}")
 
-            s_voice = voice_name
-            s_rate = tts_rate
-            if scene.mood and scene.mood in MOOD_PRESETS:
-                preset = MOOD_PRESETS[scene.mood]
-                s_voice = POPULAR_VOICES.get(preset["voice"], preset["voice"])
-                s_rate = preset["rate"]
-            if scene.voice:
-                s_voice = POPULAR_VOICES.get(scene.voice, scene.voice)
-            if scene.rate:
-                s_rate = scene.rate
+            for i, scene in enumerate(scenes):
+                audio_path = os.path.join(tmp, f"scene_{i:02d}.mp3")
 
-            mood_label = f" [{scene.mood}]" if scene.mood else ""
-            generate_narration(scene.text, audio_path, voice=s_voice, rate=s_rate)
-            tts_duration = _get_audio_duration(audio_path)
-            if scene.duration <= 0:
-                scene.duration = tts_duration + 2.5
-            elif scene.duration < tts_duration + 1.5:
-                scene.duration = tts_duration + 1.5
-            scene.audio_path = audio_path
-            scene_audios.append(audio_path)
-            print(f"   Scene {i+1}: {scene.duration:.1f}s (tts: {tts_duration:.1f}s){mood_label} - \"{scene.text[:50]}\"")
+                # Check for silent scenes
+                if is_silent_scene(scene.text):
+                    silent_dur = scene.duration if scene.duration > 0 else 3.0
+                    generate_silence(audio_path, silent_dur)
+                    if scene.duration <= 0:
+                        scene.duration = silent_dur
+                    scene.audio_path = audio_path
+                    scene_audios.append(audio_path)
+                    print(f"   Scene {i+1}: {scene.duration:.1f}s (silent) - \"{scene.text[:50]}\"")
+                    continue
+
+                s_voice = voice_name
+                s_rate = tts_rate
+                s_pitch = "+0Hz"
+                s_mood = ""
+
+                # Mood sets voice + pitch + rate for real intonation change
+                if scene.mood and scene.mood in MOOD_VOICE_SETTINGS:
+                    ms = MOOD_VOICE_SETTINGS[scene.mood]
+                    s_voice = ms["voice"]
+                    s_rate = ms["rate"]
+                    s_pitch = ms["pitch"]
+                    s_mood = scene.mood
+                elif scene.mood and scene.mood in MOOD_PRESETS:
+                    preset = MOOD_PRESETS[scene.mood]
+                    s_voice = POPULAR_VOICES.get(preset["voice"], preset["voice"])
+                    s_rate = preset["rate"]
+
+                # Explicit voice/rate override from script line
+                if scene.voice:
+                    s_voice = POPULAR_VOICES.get(scene.voice, scene.voice)
+                if scene.rate:
+                    s_rate = scene.rate
+
+                mood_label = f" [{scene.mood}]" if scene.mood else ""
+                _, scene.timings = generate_narration(scene.text, audio_path, voice=s_voice, rate=s_rate, pitch=s_pitch, mood=s_mood)
+                tts_duration = _get_audio_duration(audio_path)
+                if scene.duration <= 0:
+                    scene.duration = tts_duration + 2.5
+                elif scene.duration < tts_duration + 1.5:
+                    scene.duration = tts_duration + 1.5
+                scene.audio_path = audio_path
+                scene_audios.append(audio_path)
+                print(f"   Scene {i+1}: {scene.duration:.1f}s (tts: {tts_duration:.1f}s){mood_label} - \"{scene.text[:50]}\"")
 
         total_duration = sum(s.duration for s in scenes)
         print(f"   Total duration: {total_duration:.1f}s")
 
-        # Build full narration audio: each scene's TTS padded with silence to match timeline
-        print("-> Building timed narration track...")
-        padded_audios = []
-        for i, scene in enumerate(scenes):
-            padded_path = os.path.join(tmp, f"padded_{i:02d}.mp3")
-            _pad_audio_to_duration(scene.audio_path, scene.duration, padded_path)
-            padded_audios.append(padded_path)
+        if not use_veo_audio:
+            # Build full narration audio: each scene's TTS padded with silence to match timeline
+            print("-> Building timed narration track...")
+            padded_audios = []
+            for i, scene in enumerate(scenes):
+                padded_path = os.path.join(tmp, f"padded_{i:02d}.mp3")
+                _pad_audio_to_duration(scene.audio_path, scene.duration, padded_path)
+                padded_audios.append(padded_path)
 
-        full_narration_path = os.path.join(output_dir, "narration_full.mp3")
-        _concat_audios(padded_audios, full_narration_path)
+        full_narration_path = None
+        if not use_veo_audio:
+            full_narration_path = os.path.join(output_dir, "narration_full.mp3")
+            _concat_audios(padded_audios, full_narration_path)
 
         # Generate/download visuals for each scene
-        use_ai_visuals = visuals in ("openai", "sd")
+        use_ai_visuals = visuals in ("openai", "sd", "veo")
         if use_ai_visuals:
-            print(f"\n-> Generating AI illustrations ({visuals}) for each scene...")
+            from .imagegen import ART_STYLES, CATEGORY_STYLES
+            style_label = ""
+            if art_style and art_style in ART_STYLES:
+                style_label = f", style: {ART_STYLES[art_style]['name']}"
+            elif image_category and image_category in CATEGORY_STYLES:
+                resolved = CATEGORY_STYLES[image_category]["style"]
+                style_label = f", category: {image_category} → {ART_STYLES[resolved]['name']}"
+            if visuals == "veo":
+                print(f"\n-> Generating AI videos with Google Veo{style_label} for each scene...")
+            else:
+                print(f"\n-> Generating AI illustrations ({visuals}{style_label}) for each scene...")
         else:
             print("\n-> Downloading visuals for each scene...")
         scene_videos = []
 
+        # Build consistent visual style suffix for download queries
+        # This ensures all downloaded images share the same visual theme
+        _style_suffix = ""
+        _fallback_theme = ["cinematic landscape", "moody atmospheric", "dark dramatic"]
+        if art_style:
+            from .imagegen import ART_STYLES
+            s = ART_STYLES.get(art_style)
+            if s:
+                # Extract key visual terms for search
+                _style_map = {
+                    "pen": "ink drawing illustration",
+                    "pencil": "pencil sketch drawing",
+                    "watercolor": "watercolor painting art",
+                    "anime": "anime illustration art",
+                    "cinematic": "cinematic dramatic photography",
+                    "oil": "oil painting classical art",
+                    "comic": "comic book illustration",
+                    "minimal": "minimalist clean design",
+                    "pixel": "pixel art retro",
+                    "charcoal": "charcoal drawing dark",
+                    "storybook": "storybook illustration children",
+                    "realistic": "photography realistic 4k",
+                    "stickfigure": "simple drawing whiteboard",
+                    "sketch": "pencil sketch graphite drawing",
+                }
+                _style_suffix = " " + _style_map.get(art_style, s["name"].lower())
+                _fallback_theme = [
+                    f"{_style_map.get(art_style, '')} background",
+                    f"{_style_map.get(art_style, '')} scene",
+                    f"{_style_map.get(art_style, '')} mood",
+                ]
+        elif image_category:
+            from .imagegen import CATEGORY_STYLES
+            cat = CATEGORY_STYLES.get(image_category)
+            if cat:
+                _style_suffix = " " + cat["mood"].split()[0]  # first mood word
+                _fallback_theme = [
+                    f"{cat['mood']} landscape",
+                    f"{cat['mood']} atmosphere",
+                    f"{cat['mood']} scene",
+                ]
+
+        if _style_suffix:
+            print(f"   Visual theme: \"{_style_suffix.strip()}\" (applied to all searches)")
+
         for i, scene in enumerate(scenes):
-            print(f"   Scene {i+1}/{len(scenes)}: \"{scene.search_query}\" ({scene.duration:.1f}s)")
+            styled_query = scene.search_query + _style_suffix
+            print(f"   Scene {i+1}/{len(scenes)}: \"{styled_query}\" ({scene.duration:.1f}s)")
             visual_path = os.path.join(tmp, f"visual_{i:02d}")
             video_path = os.path.join(tmp, f"scene_video_{i:02d}.mp4")
             subtitled_path = os.path.join(tmp, f"scene_sub_{i:02d}.mp4")
             got_visual = False
 
-            # AI-generated illustrations
+            # AI-generated visuals
             if use_ai_visuals:
-                ai_img_path = visual_path + "_ai.png"
-                if generate_scene_image(scene.text, scene.search_query, ai_img_path, provider=visuals):
-                    _image_to_video(ai_img_path, scene.duration, video_path)
-                    got_visual = True
-                    print(f"      [AI illustration generated]")
+                if visuals == "veo":
+                    veo_path = visual_path + "_veo.mp4"
+                    if generate_scene_video(scene.text, scene.search_query, veo_path, duration=scene.duration, art_style=art_style, category=image_category):
+                        _trim_video_to_duration(veo_path, scene.duration, video_path)
+                        got_visual = True
+                        print(f"      [Veo video generated]")
+                else:
+                    ai_img_path = visual_path + "_ai.png"
+                    if generate_scene_image(scene.text, scene.search_query, ai_img_path, provider=visuals, art_style=art_style, category=image_category):
+                        _image_to_video(ai_img_path, scene.duration, video_path)
+                        got_visual = True
+                        print(f"      [AI illustration generated]")
 
-            # Download mode or AI fallback
+            # Download mode or AI fallback — use styled_query for consistent theme
             if not got_visual and scene.visual_type == "video":
                 pexels_path = visual_path + "_pexels.mp4"
-                if _download_pexels_video(scene.search_query, pexels_path):
+                if _download_pexels_video(styled_query, pexels_path):
                     reframed = visual_path + "_reframed.mp4"
                     reframe_vertical(pexels_path, reframed, mode="crop")
                     _trim_video_to_duration(reframed, scene.duration, video_path)
@@ -775,7 +897,7 @@ def create_story(
 
                 if not got_visual:
                     yt_path = visual_path + "_yt.mp4"
-                    if _download_youtube_clip(scene.search_query + " stock footage", yt_path):
+                    if _download_youtube_clip(styled_query + " stock footage", yt_path):
                         reframed = visual_path + "_reframed.mp4"
                         reframe_vertical(yt_path, reframed, mode="crop")
                         _trim_video_to_duration(reframed, scene.duration, video_path)
@@ -784,7 +906,7 @@ def create_story(
 
             if not got_visual:
                 img_path = visual_path + ".jpg"
-                if _download_scene_image(scene.search_query, img_path):
+                if _download_scene_image(styled_query, img_path):
                     _image_to_video(img_path, scene.duration, video_path)
                     got_visual = True
                     print(f"      [Image found]")
@@ -794,8 +916,8 @@ def create_story(
                 words = scene.search_query.split()
                 fallback_queries = []
                 if len(words) > 2:
-                    fallback_queries.append(" ".join(words[:2]))
-                fallback_queries.extend(["dark cinematic landscape", "nature moody", "silhouette dramatic"])
+                    fallback_queries.append(" ".join(words[:2]) + _style_suffix)
+                fallback_queries.extend(_fallback_theme)
                 for fq in fallback_queries:
                     if _download_scene_image(fq, fallback_img):
                         _image_to_video(fallback_img, scene.duration, video_path)
@@ -807,19 +929,22 @@ def create_story(
                 print(f"      [Text card - no visual found]")
                 _make_text_card(scene.text[:80], scene.duration, video_path)
 
-            # Burn subtitle onto the scene video
-            _burn_subtitle(video_path, scene.text, scene.duration, subtitled_path)
-            scene_videos.append(subtitled_path)
+            scene_videos.append(video_path)
 
-        # Concatenate all scene videos with crossfade transitions
+        # Concatenate all scene videos
         print("\n-> Stitching scenes with transitions...")
-        visual_concat = os.path.join(tmp, "visual_concat.mp4")
-        _concat_with_transitions(scene_videos, visual_concat)
-
-        # Merge with full narration audio
-        print("-> Merging narration with visuals...")
         final_path = os.path.join(output_dir, "story_output.mp4")
-        _merge_audio_video(visual_concat, full_narration_path, final_path)
+
+        if use_veo_audio:
+            # Veo scenes have their own audio — concat with audio preserved
+            visual_concat = os.path.join(tmp, "visual_concat.mp4")
+            _concat_scenes_with_audio(scene_videos, visual_concat)
+            shutil.copy2(visual_concat, final_path)
+        else:
+            visual_concat = os.path.join(tmp, "visual_concat.mp4")
+            _concat_with_transitions(scene_videos, visual_concat)
+            print("-> Merging narration with visuals...")
+            _merge_audio_video(visual_concat, full_narration_path, final_path)
 
     # Auto-find background music if none provided
     if not music_path and auto_music:
@@ -837,38 +962,170 @@ def create_story(
                   original_volume=1.0, music_volume=music_volume)
         os.replace(music_out, final_path)
 
+    # Transcribe the final video and burn word-level captions (skip for Veo)
+    if not use_veo_audio:
+        print("\n-> Transcribing final video for word-level captions...")
+        try:
+            segments = transcribe(final_path)
+            words = [w for seg in segments for w in seg.words]
+            if words:
+                ass_path = os.path.join(output_dir, "story_captions.ass")
+                build_ass(words, clip_start=0.0, output_path=ass_path)
+                captioned_path = final_path + ".captioned.mp4"
+                burn_captions(final_path, ass_path, captioned_path)
+                os.replace(captioned_path, final_path)
+                print(f"   Burned {len(words)} word-level captions")
+            else:
+                print("   No words detected, skipping captions")
+        except Exception as e:
+            print(f"   Warning: caption transcription failed ({e}), video saved without captions")
+
     print(f"\n-> Story video saved: {final_path}")
     return final_path
 
 
-def _burn_subtitle(input_path: str, text: str, duration: float, output_path: str) -> None:
-    """Burn subtitle text onto a video clip with fade-in animation."""
-    # Escape special characters for ffmpeg drawtext
-    escaped = text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "%%")
-    # Word wrap: insert newline every ~30 chars at word boundary
-    words = escaped.split()
-    lines = []
-    current_line = ""
-    for word in words:
-        if len(current_line) + len(word) + 1 > 30:
-            lines.append(current_line)
-            current_line = word
-        else:
-            current_line = f"{current_line} {word}" if current_line else word
-    if current_line:
-        lines.append(current_line)
-    wrapped_text = "\n".join(lines)
+def _escape_drawtext(text: str) -> str:
+    """Escape text for ffmpeg drawtext filter."""
+    t = text
+    t = t.replace("\\", "\\\\")
+    t = t.replace("'", "\\'")
+    t = t.replace(":", "\\:")
+    t = t.replace("%", "%%")
+    t = t.replace('"', '\\"')
+    return t
 
-    # Subtitle style: white text with black background box, centered at bottom
-    vf = (
-        f"drawtext=text='{wrapped_text}':"
-        f"fontfile=/System/Library/Fonts/Supplemental/Arial Bold.ttf:"
-        f"fontsize=42:fontcolor=white:"
-        f"borderw=2:bordercolor=black:"
-        f"box=1:boxcolor=black@0.5:boxborderw=15:"
-        f"x=(w-text_w)/2:y=h-text_h-200:"
-        f"enable='between(t,0.3,{duration:.2f})'"
+
+def _wrap_text(text: str, max_chars: int = 25) -> str:
+    """Word-wrap text for subtitle display."""
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        if len(current) + len(word) + 1 > max_chars:
+            lines.append(current)
+            current = word
+        else:
+            current = f"{current} {word}" if current else word
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
+def _build_typewriter_filters(
+    words: List[str],
+    start: float,
+    end: float,
+    fontfile: str,
+    y_base: str = "h-text_h-180",
+) -> List[str]:
+    """Build drawtext filters that reveal words one by one (typewriter effect).
+    Each word appears at a staggered time within the sentence duration."""
+    if not words:
+        return []
+
+    total_dur = end - start
+    fade_out_dur = 0.4
+    # Time per word reveal — spread words evenly across ~70% of duration
+    typing_window = total_dur * 0.7
+    delay_per_word = typing_window / max(len(words), 1)
+
+    filters = []
+    for i in range(len(words)):
+        # Show accumulated words up to this point
+        partial_text = " ".join(words[:i + 1])
+        escaped = _escape_drawtext(partial_text)
+        wrapped = _wrap_text(escaped)
+
+        word_start = start + (i * delay_per_word)
+        # Next word replaces this one, or this is the last
+        if i < len(words) - 1:
+            word_end = start + ((i + 1) * delay_per_word)
+        else:
+            word_end = end
+
+        # Alpha: appear instantly, hold, fade out at sentence end (only last word fades)
+        if i < len(words) - 1:
+            alpha = (
+                f"if(between(t\\,{word_start:.2f}\\,{word_end:.2f})\\,1\\,0)"
+            )
+        else:
+            alpha = (
+                f"if(lt(t\\,{word_start:.2f})\\,0\\,"
+                f"if(lt(t\\,{end - fade_out_dur:.2f})\\,1\\,"
+                f"if(lt(t\\,{end:.2f})\\,({end:.2f}-t)/{fade_out_dur:.2f}\\,"
+                f"0)))"
+            )
+
+        filters.append(
+            f"drawtext=text='{wrapped}':"
+            f"fontfile={fontfile}:"
+            f"fontsize=46:fontcolor=white:"
+            f"shadowcolor=black@0.8:shadowx=3:shadowy=3:"
+            f"borderw=1:bordercolor=black@0.3:"
+            f"x=(w-text_w)/2:y={y_base}:"
+            f"alpha='{alpha}'"
+        )
+
+    # Blinking cursor after last word
+    cursor_start = start
+    cursor_end = end - fade_out_dur
+    # Cursor x position: after the text. Use a fixed offset since we can't measure dynamically.
+    # Blink every 0.5s using mod
+    cursor_alpha = (
+        f"if(between(t\\,{cursor_start:.2f}\\,{cursor_end:.2f})\\,"
+        f"if(lt(mod(t\\,0.8)\\,0.5)\\,1\\,0)\\,0)"
     )
+    filters.append(
+        f"drawtext=text='|':"
+        f"fontfile={fontfile}:"
+        f"fontsize=46:fontcolor=white@0.9:"
+        f"x=(w/2)+30:y={y_base}:"
+        f"alpha='{cursor_alpha}'"
+    )
+
+    return filters
+
+
+def _burn_subtitle(input_path: str, text: str, duration: float, output_path: str,
+                   timings: Optional[List] = None) -> None:
+    """Burn cinematic typewriter subtitles synced to speech timing.
+    Words appear one by one as they are spoken, with a blinking cursor."""
+    from .narration import is_silent_scene
+    if is_silent_scene(text):
+        shutil.copy2(input_path, output_path)
+        return
+
+    font_primary = "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
+    font_fallback = "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf"
+    font_last = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+    fontfile = font_primary
+    if not os.path.exists(fontfile):
+        fontfile = font_fallback if os.path.exists(font_fallback) else font_last
+
+    all_filters = []
+
+    if timings and len(timings) > 0:
+        for st in timings:
+            words = st.text.split()
+            start = st.start
+            end = st.start + st.duration
+            all_filters.extend(
+                _build_typewriter_filters(words, start, end, fontfile)
+            )
+    else:
+        words = text.split()
+        start = 0.3
+        end = duration - 0.2
+        all_filters.extend(
+            _build_typewriter_filters(words, start, end, fontfile)
+        )
+
+    if not all_filters:
+        shutil.copy2(input_path, output_path)
+        return
+
+    vf = ",".join(all_filters)
+
     cmd = [
         FFMPEG, "-y",
         "-i", input_path,
@@ -878,8 +1135,6 @@ def _burn_subtitle(input_path: str, text: str, duration: float, output_path: str
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        # If subtitle burn fails, just copy the video as-is
-        import shutil
         shutil.copy2(input_path, output_path)
 
 
@@ -887,8 +1142,10 @@ def _make_text_card(text: str, duration: float, output_path: str) -> None:
     """Create a simple text-on-black video as fallback."""
     # Escape special chars for ffmpeg drawtext
     escaped = text.replace("'", "\\'").replace(":", "\\:")
+    w = settings.vertical_width
+    h = settings.vertical_height
     vf = (
-        f"color=c=black:s=1080x1920:d={duration},"
+        f"color=c=black:s={w}x{h}:d={duration},"
         f"drawtext=text='{escaped}':"
         f"fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:"
         f"fontfile=/System/Library/Fonts/Supplemental/Arial.ttf"
@@ -902,10 +1159,9 @@ def _make_text_card(text: str, duration: float, output_path: str) -> None:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        # Ultra fallback: just black video
         cmd2 = [
             FFMPEG, "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s=1080x1920:d={duration}",
+            "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}:d={duration}",
             "-c:v", "libx264", "-pix_fmt", "yuv420p",
             "-t", str(duration),
             output_path,

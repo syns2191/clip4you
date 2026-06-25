@@ -26,13 +26,16 @@ class Settings:
     whisper_device: str = os.getenv("WHISPER_DEVICE", "auto")  # cpu / cuda / auto
     whisper_compute_type: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")
 
+    # Google Gemini / Veo (AI video generation)
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+
     output_dir: str = os.getenv("OUTPUT_DIR", "output")
 
     clip_min_seconds: int = int(os.getenv("CLIP_MIN_SECONDS", "60"))
     clip_max_seconds: int = int(os.getenv("CLIP_MAX_SECONDS", "90"))
 
-    vertical_width: int = 1080
-    vertical_height: int = 1920
+    vertical_width: int = int(os.getenv("VIDEO_WIDTH", "1080"))
+    vertical_height: int = int(os.getenv("VIDEO_HEIGHT", "1920"))
 
 
 settings = Settings()

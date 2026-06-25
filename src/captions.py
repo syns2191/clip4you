@@ -76,10 +76,15 @@ def build_ass(
     words: List[Word],
     clip_start: float,
     output_path: str,
-    canvas_w: int = 1080,
-    canvas_h: int = 1920,
+    canvas_w: int = None,
+    canvas_h: int = None,
     tension_colors: bool = True,
 ) -> None:
+    from .config import settings
+    if canvas_w is None:
+        canvas_w = settings.vertical_width
+    if canvas_h is None:
+        canvas_h = settings.vertical_height
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {canvas_w}

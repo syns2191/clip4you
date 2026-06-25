@@ -4,8 +4,10 @@ Free, high-quality, many voices/languages, no API key needed.
 """
 import asyncio
 import os
+import re
 import subprocess
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, List
 
 from .render import FFMPEG
 
@@ -52,17 +54,133 @@ POPULAR_VOICES = {
     "female-en": "en-US-JennyNeural",
 }
 
+# Mood → voice + pitch + rate adjustments for real intonation change
+# pitch shifts the tone (deeper/higher), rate shifts speed
+MOOD_VOICE_SETTINGS = {
+    "dramatic":   {"voice": "en-US-ChristopherNeural", "pitch": "-10Hz", "rate": "-25%"},
+    "tension":    {"voice": "en-US-EricNeural",        "pitch": "-5Hz",  "rate": "-20%"},
+    "intense":    {"voice": "en-US-RogerNeural",       "pitch": "+5Hz",  "rate": "-5%"},
+    "dark":       {"voice": "en-GB-ThomasNeural",      "pitch": "-15Hz", "rate": "-30%"},
+    "warm":       {"voice": "en-US-BrianNeural",       "pitch": "+0Hz",  "rate": "-25%"},
+    "caring":     {"voice": "en-US-AvaNeural",         "pitch": "+5Hz",  "rate": "-25%"},
+    "storyteller": {"voice": "en-US-AndrewNeural",     "pitch": "+0Hz",  "rate": "-20%"},
+    "friendly":   {"voice": "en-US-JennyNeural",       "pitch": "+5Hz",  "rate": "-15%"},
+    "cheerful":   {"voice": "en-US-EmmaNeural",        "pitch": "+10Hz", "rate": "-10%"},
+    "sad":        {"voice": "en-US-AvaNeural",         "pitch": "-10Hz", "rate": "-35%"},
+    "calm":       {"voice": "en-US-BrianNeural",       "pitch": "-5Hz",  "rate": "-30%"},
+    "excited":    {"voice": "en-US-RogerNeural",       "pitch": "+10Hz", "rate": "+5%"},
+    "angry":      {"voice": "en-US-RogerNeural",       "pitch": "+5Hz",  "rate": "+5%"},
+    "whisper":    {"voice": "en-US-BrianNeural",       "pitch": "-5Hz",  "rate": "-35%"},
+    "slow":       {"voice": "en-US-BrianNeural",       "pitch": "-5Hz",  "rate": "-40%"},
+    "fast":       {"voice": "en-US-BrianNeural",       "pitch": "+5Hz",  "rate": "+10%"},
+    "tiktok":     {"voice": "en-US-GuyNeural",         "pitch": "+5Hz",  "rate": "-5%"},
+    "viral":      {"voice": "en-US-RogerNeural",       "pitch": "+5Hz",  "rate": "-5%"},
+    "cute":       {"voice": "en-US-AnaNeural",         "pitch": "+15Hz", "rate": "-10%"},
+    "news":       {"voice": "en-US-AriaNeural",        "pitch": "+0Hz",  "rate": "-10%"},
+    "documentary": {"voice": "en-US-ChristopherNeural","pitch": "-5Hz",  "rate": "-15%"},
+    "narrator":   {"voice": "en-US-GuyNeural",         "pitch": "-5Hz",  "rate": "-15%"},
+}
 
-async def _generate_tts(text: str, output_path: str, voice: str, rate: str = "-10%") -> None:
-    import edge_tts
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
-    await communicate.save(output_path)
+# Patterns that indicate a silent/non-spoken scene
+SILENCE_PATTERNS = [
+    r"^\[.*\]$",                    # [INTRO], [SILENCE], [PAUSE], [END]
+    r"^—\s*silence\s*—$",          # — silence —
+    r"^-+\s*silence\s*-+$",        # --- silence ---
+    r"^\[silent\]",                 # [silent]
+    r"^\[no\s*voice\]",            # [no voice]
+    r"^\[no\s*narration\]",        # [no narration]
+    r"^\[music\s*only\]",          # [music only]
+    r"^\[sfx\s*only\]",            # [sfx only]
+    r"^\.\.\.$",                    # ...
+]
 
 
-def generate_narration(text: str, output_path: str, voice: str = DEFAULT_VOICE, rate: str = "-10%") -> str:
-    """Generate TTS audio from text. Rate controls speed: '-20%' = slower, '+0%' = normal."""
-    asyncio.run(_generate_tts(text, output_path, voice, rate=rate))
+def is_silent_scene(text: str) -> bool:
+    """Check if a narration line should be silent (no TTS)."""
+    cleaned = text.strip()
+    if not cleaned:
+        return True
+    for pattern in SILENCE_PATTERNS:
+        if re.match(pattern, cleaned, re.IGNORECASE):
+            return True
+    # Check for text that's mostly stage directions: [INTRO] — silence —
+    bracketed = re.findall(r"\[.*?\]", cleaned)
+    remaining = re.sub(r"\[.*?\]", "", cleaned).strip()
+    # Remove dashes, em-dashes, "silence", and whitespace
+    remaining = re.sub(r"[—–\-\s]+", " ", remaining).strip()
+    remaining = re.sub(r"\b(silence|silent|fade\s*out|fade\s*in|pause|intro|outro|end)\b", "", remaining, flags=re.IGNORECASE).strip()
+    remaining = re.sub(r"[—–\-\s]+", "", remaining)
+    if bracketed and not remaining:
+        return True
+    return False
+
+
+def generate_silence(output_path: str, duration: float) -> str:
+    """Generate a silent audio file of given duration."""
+    cmd = [
+        FFMPEG, "-y",
+        "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=mono",
+        "-t", str(duration),
+        "-c:a", "libmp3lame", "-b:a", "32k",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, text=True)
     return output_path
+
+
+@dataclass
+class SentenceTiming:
+    text: str
+    start: float
+    duration: float
+
+
+async def _generate_tts(text: str, output_path: str, voice: str, rate: str = "-10%", pitch: str = "+0Hz") -> list:
+    import edge_tts
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    timings = []
+    audio_chunks = []
+
+    async for event in communicate.stream():
+        if event["type"] == "audio":
+            audio_chunks.append(event["data"])
+        elif event["type"] == "SentenceBoundary":
+            timings.append(SentenceTiming(
+                text=event["text"],
+                start=event["offset"] / 10_000_000,
+                duration=event["duration"] / 10_000_000,
+            ))
+
+    with open(output_path, "wb") as f:
+        for chunk in audio_chunks:
+            f.write(chunk)
+
+    return timings
+
+
+def generate_narration(
+    text: str,
+    output_path: str,
+    voice: str = DEFAULT_VOICE,
+    rate: str = "-10%",
+    pitch: str = "+0Hz",
+    mood: str = "",
+) -> tuple:
+    """Generate TTS audio from text with voice, rate, and pitch control.
+    Returns (output_path, list[SentenceTiming]).
+    If mood is set, it overrides voice/rate/pitch with mood-specific settings."""
+    if is_silent_scene(text):
+        generate_silence(output_path, 2.0)
+        return output_path, []
+
+    if mood and mood in MOOD_VOICE_SETTINGS:
+        settings = MOOD_VOICE_SETTINGS[mood]
+        voice = settings["voice"]
+        rate = settings["rate"]
+        pitch = settings["pitch"]
+
+    timings = asyncio.run(_generate_tts(text, output_path, voice, rate=rate, pitch=pitch))
+    return output_path, timings
 
 
 def mix_narration(

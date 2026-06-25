@@ -240,6 +240,106 @@ def mix_music(
     )
 
 
+def generate_crowd_roar(output_path: str, duration: float) -> None:
+    """Generate a stadium crowd roar sound effect using ffmpeg synthesis."""
+    fade_in = min(0.5, duration * 0.2)
+    fade_out = min(1.0, duration * 0.3)
+    af = (
+        f"anoisesrc=d={duration:.2f}:c=pink:a=0.4,"
+        f"bandpass=f=800:width_type=o:w=2,"
+        f"bandpass=f=1200:width_type=o:w=3,"
+        f"afade=t=in:st=0:d={fade_in:.2f},"
+        f"afade=t=out:st={duration - fade_out:.2f}:d={fade_out:.2f}"
+    )
+    _run([
+        FFMPEG, "-y",
+        "-f", "lavfi", "-i", af,
+        "-t", str(duration),
+        "-c:a", "aac", "-b:a", "128k",
+        output_path,
+    ])
+
+
+def generate_sfx(output_path: str, effect: str) -> None:
+    """Generate a short sound effect using ffmpeg synthesis.
+    Effects: whoosh, impact, rise, drop, whistle, horn, buzzer."""
+    effects = {
+        "whoosh": (
+            "anoisesrc=d=0.4:c=pink:a=0.3,"
+            "bandpass=f=2000:width_type=o:w=4,"
+            "afade=t=in:st=0:d=0.1,"
+            "afade=t=out:st=0.2:d=0.2,"
+            "asetrate=44100*1.5,atempo=0.67"
+        ),
+        "impact": (
+            "anoisesrc=d=0.3:c=brown:a=0.6,"
+            "lowpass=f=200,"
+            "afade=t=out:st=0.05:d=0.25"
+        ),
+        "rise": (
+            "anoisesrc=d=1.5:c=pink:a=0.2,"
+            "bandpass=f=1000:width_type=o:w=2,"
+            "afade=t=in:st=0:d=1.2,"
+            "afade=t=out:st=1.3:d=0.2,"
+            "asetrate=44100*0.5,atempo=2.0"
+        ),
+        "drop": (
+            "anoisesrc=d=0.5:c=brown:a=0.5,"
+            "lowpass=f=150,"
+            "afade=t=in:st=0:d=0.05,"
+            "afade=t=out:st=0.1:d=0.4"
+        ),
+        "whistle": (
+            "sine=f=3200:d=1.0,"
+            "afade=t=in:st=0:d=0.05,"
+            "afade=t=out:st=0.6:d=0.4,"
+            "tremolo=f=6:d=0.4"
+        ),
+        "horn": (
+            "sine=f=440:d=1.5,"
+            "afade=t=in:st=0:d=0.1,"
+            "afade=t=out:st=1.0:d=0.5,"
+            "lowpass=f=600"
+        ),
+        "buzzer": (
+            "sine=f=200:d=0.8,"
+            "afade=t=in:st=0:d=0.02,"
+            "afade=t=out:st=0.5:d=0.3,"
+            "tremolo=f=15:d=0.7"
+        ),
+    }
+    af = effects.get(effect, effects["whoosh"])
+    _run([
+        FFMPEG, "-y",
+        "-f", "lavfi", "-i", af,
+        "-c:a", "aac", "-b:a", "128k",
+        output_path,
+    ])
+
+
+def mix_sfx(
+    input_path: str,
+    sfx_path: str,
+    output_path: str,
+    offset: float = 0.0,
+    volume: float = 0.6,
+) -> None:
+    """Mix a sound effect into the video at a given offset (seconds)."""
+    delay_ms = int(offset * 1000)
+    af = (
+        f"[1:a]volume={volume},adelay={delay_ms}|{delay_ms},apad[sfx];"
+        f"[0:a][sfx]amix=inputs=2:duration=first:normalize=0"
+    )
+    _run([
+        FFMPEG, "-y",
+        "-i", input_path,
+        "-i", sfx_path,
+        "-filter_complex", af,
+        "-map", "0:v", "-c:v", "copy",
+        output_path,
+    ])
+
+
 def add_emoji_overlay(
     input_path: str,
     emoji: str,
