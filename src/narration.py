@@ -175,7 +175,6 @@ def generate_narration(
 
     if mood and mood in MOOD_VOICE_SETTINGS:
         settings = MOOD_VOICE_SETTINGS[mood]
-        voice = settings["voice"]
         rate = settings["rate"]
         pitch = settings["pitch"]
 

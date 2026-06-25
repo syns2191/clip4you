@@ -510,6 +510,13 @@ python -m src.main story --script script.txt --voice warm --visuals openai
 | `--visuals` | Visual source: `download`, `openai`, `sd`, `veo` | `download` |
 | `--art-style` | Art style for AI images/video (see below) | auto |
 | `--image-category` | Image category — auto-selects style + mood (see below) | — |
+| `--animation` | Image animation: `zoom-in`, `zoom-out`, `pan-left`, `pan-right`, `pan-up`, `pan-down`, `zoom-pan`, `ken-burns`, `static` | `ken-burns` |
+| `--film-grain` | Film effect: `light`, `medium`, `heavy`, `vintage` | — |
+| `--caption-style` | Caption style: `default` (karaoke) or `bubble` (thought bubbles) | `default` |
+| `--caption-font` | Caption font style (see font table below) | auto |
+| `--caption-animation` | Caption animation: `karaoke`, `word`, or `typing` (see below) | `karaoke` |
+| `--hook-text` | Hook text overlay on intro: `auto` (AI-generated) or custom text | — |
+| `--review-images` | Review generated images and regenerate before rendering | off |
 | `--music FILE` | Path to background music | — |
 | `--music-ai` | AI suggests background music | off |
 | `--music-genre TEXT` | Genre for music search | — |
@@ -564,6 +571,8 @@ python -m src.main story --script script.txt --visuals sd --art-style anime
 | `storybook` | Whimsical children's book illustration |
 | `realistic` | Photorealistic, sharp focus |
 | `stickfigure` | Simple stick figure doodle, whiteboard sketch |
+| `sketch` | Pencil sketch with LoRA, black & white graphite |
+| `ghibli` | Studio Ghibli / Hayao Miyazaki style, hand-drawn, vivid colors |
 
 ### Image Categories (`--image-category`)
 
@@ -635,6 +644,201 @@ GEMINI_API_KEY=your_key_here
 
 Get your API key at [Google AI Studio](https://ai.studio/). Veo requires prepaid credits.
 
+### Image Animation (`--animation`)
+
+Control how static images move when converted to video:
+
+```bash
+# Ken Burns (default) — varies per scene automatically
+python -m src.main story --script script.txt --visuals sd --animation ken-burns
+
+# Slow zoom in
+python -m src.main story --script script.txt --visuals sd --animation zoom-in
+
+# No movement
+python -m src.main story --script script.txt --visuals sd --animation static
+```
+
+| Preset | Effect |
+|--------|--------|
+| `zoom-in` | Slow zoom into center |
+| `zoom-out` | Start zoomed, pull back |
+| `pan-left` | Slow pan right to left |
+| `pan-right` | Slow pan left to right |
+| `pan-up` | Slow pan bottom to top |
+| `pan-down` | Slow pan top to bottom |
+| `zoom-pan` | Zoom in while panning right |
+| `ken-burns` | Cycles through effects per scene (default) |
+| `static` | No movement |
+
+### Film Grain & Vintage (`--film-grain`)
+
+Add film grain, noise, or a full vintage film look:
+
+```bash
+# Subtle grain
+python -m src.main story --script script.txt --visuals sd --film-grain light
+
+# Documentary feel
+python -m src.main story --script script.txt --visuals sd --film-grain medium
+
+# Full vintage film — sepia, heavy grain, scratches, vignette, flicker
+python -m src.main story --script script.txt --visuals sd --film-grain vintage
+
+# 35mm film texture — organic grain, warm halation, filmic contrast
+python -m src.main story --script script.txt --visuals sd --film-grain 35mm
+
+# Gritty cinematic — crushed blacks, teal-orange grade, harsh contrast
+python -m src.main story --script script.txt --visuals sd --film-grain gritty
+
+# Noise overlay — dense visible grain, minimal color shift
+python -m src.main story --script script.txt --visuals sd --film-grain noise-overlay
+
+# Retro — warm amber tint, faded blacks, film scratches, projector flicker
+python -m src.main story --script script.txt --visuals sd --film-grain retro
+```
+
+| Effect | Description |
+|--------|-------------|
+| `light` | Subtle grain, 90% saturation |
+| `medium` | Visible grain, 85% saturation, vignette |
+| `heavy` | Strong grain, 75% saturation, heavy vignette |
+| `vintage` | Full old film look: heavy grain, sepia tone, film scratches, projector flicker, strong vignette |
+| `35mm` | 35mm film texture: fine organic grain, warm highlight shift, halation bloom, filmic contrast |
+| `gritty` | Gritty cinematic: crushed blacks, heavy grain, desaturated, teal-orange grade, harsh contrast |
+| `noise-overlay` | Dense visible noise overlay across all channels, slight desaturation, no color shift |
+| `retro` | Retro look: warm amber tint, faded blacks, heavy grain, film scratches, projector flicker |
+
+### Caption Styles (`--caption-style`)
+
+Choose between cinematic karaoke captions or comic-style thought bubbles:
+
+```bash
+# Default — karaoke captions (full chunk, active word highlighted)
+python -m src.main story --script script.txt --visuals sd --caption-style default
+
+# Thought bubbles — doodle cloud near character's head
+python -m src.main story --script script.txt --visuals sd --caption-style bubble
+```
+
+**Default captions:** Uppercase, glow outline + shadow, word-by-word highlight synced to speech.
+
+**Bubble captions:** Animated thought bubble with smooth cloud shape (8-bump cosine wave, dark stroke outline), 3 trail dots that pop in sequentially with easeOutBack spring animation, cloud that grows in with overshoot, and a gentle sine-bob idle float. Each bubble is rendered as a transparent animated video overlay at 25fps. Face detection positions the bubble near the character's head.
+
+### Caption Animation (`--caption-animation`)
+
+Control how caption text appears on screen. Works with both `default` and `bubble` caption styles.
+
+```bash
+# Karaoke — full chunk visible, highlights active word (default)
+python -m src.main story --script script.txt --caption-animation karaoke
+
+# Word — words appear one by one as spoken
+python -m src.main story --script script.txt --caption-animation word
+
+# Typing — character by character like human typing
+python -m src.main story --script script.txt --caption-animation typing
+
+# Combine with bubble style
+python -m src.main story --script script.txt --caption-style bubble --caption-animation typing
+```
+
+| Animation | Effect | Best for |
+|-----------|--------|----------|
+| `karaoke` | Full chunk visible, active word highlighted and scaled | Classic subtitle feel, easy to read |
+| `word` | Words appear one by one, building up the phrase | Clean reveal, good pacing |
+| `typing` | Characters appear one by one like human writing | Engaging, personal, storytelling |
+
+### Caption Fonts (`--caption-font`)
+
+Choose from 11 fonts optimized for short-form video captions. Works with both caption styles.
+
+```bash
+# Impact font for meme-style bold captions
+python -m src.main story --script script.txt --caption-font impact
+
+# Chalkduster for playful handwritten look
+python -m src.main story --script script.txt --caption-style bubble --caption-font chalkduster
+
+# DIN for clean modern editorial feel
+python -m src.main story --script script.txt --caption-font din
+
+# Croissant One for elegant decorative captions
+python -m src.main story --script script.txt --caption-font croissant
+```
+
+| Font | Style | Best for |
+|------|-------|----------|
+| `futura` | Clean modern sans-serif | Default captions (default) |
+| `impact` | Heavy condensed | Meme-style, bold statements |
+| `arial-black` | Thick sans-serif | High visibility |
+| `georgia` | Elegant serif | Storytelling, narrative (bubble default) |
+| `trebuchet` | Rounded sans-serif | Friendly, approachable |
+| `verdana` | Wide sans-serif | Maximum screen readability |
+| `din` | Geometric bold | Modern, editorial |
+| `chalkduster` | Handwritten chalk | Casual, playful |
+| `comic-sans` | Comic book style | Fun, informal |
+| `times` | Classic serif | Formal, documentary |
+| `croissant-one` | Decorative serif (Google Fonts) | Elegant, stylish, eye-catching |
+
+### Hook Text Overlay (`--hook-text`)
+
+Add a short hook/summary text overlay at the start of the video to grab viewers' attention. The text appears as a pill/badge that slides down from the top and fades out after a few seconds.
+
+```bash
+# AI generates a hook from the script (max 6 words)
+python -m src.main story --script script.txt --hook-text auto
+
+# Use your own custom hook text
+python -m src.main story --script script.txt --hook-text "THE TRUTH NOBODY TELLS YOU"
+
+# Combine with other features
+python -m src.main story --script script.txt --visuals sd --art-style sketch \
+  --hook-text auto --caption-style bubble --film-grain vintage
+```
+
+The hook overlay appears during the intro scene (up to 5 seconds), slides down from above, holds, then fades out. It sits at the top of the screen so it doesn't conflict with captions in the lower third.
+
+### Image Review & Regeneration (`--review-images`)
+
+Review all generated images before rendering and regenerate any that don't look right:
+
+```bash
+python -m src.main story --script script.txt --visuals sd --art-style sketch --review-images
+```
+
+After images generate, a preview folder opens in Finder:
+```
+============================================================
+  SCENE IMAGE REVIEW
+============================================================
+  [1] [OK    ] "[INTRO] — silence —"
+  [2] [OK    ] "The mountain stands tall against the morning..."
+  [3] [OK    ] "And in its shadow, a river flows in silence."
+============================================================
+Commands:
+  2,4     — regenerate scenes 2 and 4
+  open 3  — open scene 3 image in Preview
+  open    — open review folder
+  done    — continue to render
+>
+```
+
+Regenerate as many times as you want until all images look right. Cache is cleared for regenerated scenes so SD produces a fresh image with a new seed.
+
+### Silent Scenes
+
+Mark scenes as silent (no voice) using brackets or dashes:
+
+```
+0:00 | [INTRO] — silence — | black screen | image | cinematic
+0:05 | [PAUSE] | transition scene | image
+0:10 | [music only] | landscape | image
+0:15 | ... | fade scene | image
+```
+
+These generate silent audio — no TTS, no captions burned.
+
 ### Script formats
 
 **Format 1 — Plain text (AI splits into scenes automatically):**
@@ -680,7 +884,7 @@ Fields after search keyword can be in **any order**. Duration of each scene = ga
 
 ### Mood presets
 
-Each mood sets both the voice character and speech speed. You can override the speed with a custom rate in the same line.
+Each mood changes the **intonation** (pitch + speed) of the voice — the voice actor stays the same as whatever you set with `--voice`. This means "dramatic" makes the same voice deeper and slower, not a different person.
 
 | Mood | Voice style | Speed | Best for |
 |------|------------|-------|----------|
@@ -722,6 +926,26 @@ Each mood sets both the voice character and speech speed. You can override the s
 ### Story examples
 
 ```bash
+# Ghibli style with vintage film grain + thought bubble captions
+python -m src.main story \
+  --script script.txt \
+  --visuals sd \
+  --art-style ghibli \
+  --film-grain vintage \
+  --caption-style bubble \
+  --caption-font chalkduster \
+  --animation ken-burns \
+  --music-ai
+
+# Sketch style with image review before rendering
+python -m src.main story \
+  --script script.txt \
+  --visuals sd \
+  --art-style sketch \
+  --review-images \
+  --caption-style bubble \
+  --caption-font georgia
+
 # Stick figure meditation video with Veo (AI video + voice + SFX)
 python -m src.main story \
   --script script.txt \
@@ -744,28 +968,10 @@ python -m src.main story \
   --image-category fantasy \
   --music-ai
 
-# AI-generated illustrations with OpenAI, dramatic voice
-python -m src.main story \
-  --script script.txt \
-  --voice warm \
-  --visuals openai \
-  --music-ai
-
-# Local Stable Diffusion illustrations (free)
-python -m src.main story \
-  --script script.txt \
-  --visuals sd \
-  --voice storyteller
-
 # Downloaded stock visuals (default, no API key needed)
 python -m src.main story \
   --script "Artificial intelligence is changing the world." \
   --voice female-en
-
-# Indonesian narration
-python -m src.main story \
-  --script "Pada zaman dahulu ada seorang raja." \
-  --voice male-id
 
 # Upload to YouTube Shorts after rendering
 python -m src.main story \
@@ -778,15 +984,18 @@ python -m src.main story \
 ### How story mode works
 
 **Standard flow** (download/openai/sd):
-1. **Parse script** — splits into scenes (by timeline or AI). Per-scene mood/voice settings are extracted.
-2. **Generate TTS** — creates voiceover for each scene using Edge TTS with the scene's voice and speed.
-3. **Generate/find visuals** — AI-generates illustrations (OpenAI/SD) or downloads stock images/videos. Art style and category affect the visual look.
-4. **Reframe** — crops/resizes all visuals to 9:16 vertical with Ken Burns zoom effect.
-5. **Subtitle** — burns narration text onto each scene.
+1. **Parse script** — splits into scenes (by timeline or AI). Per-scene mood settings extracted.
+2. **Generate TTS** — creates voiceover per scene. Mood changes intonation (pitch + rate), not the voice actor.
+3. **Generate visuals** — AI-generates images or downloads stock visuals. Detects faces for bubble caption positioning.
+4. **Review** (if `--review-images`) — preview images, regenerate any that don't look right.
+5. **Animate** — converts images to video with selected animation (Ken Burns, zoom, pan, etc.).
 6. **Stitch** — concatenates all scenes with crossfade transitions.
 7. **Merge** — combines visual track with full narration audio.
 8. **Music** — optionally adds AI-selected background music.
-9. **Upload** — optionally uploads to YouTube Shorts with LLM-optimized metadata.
+9. **Transcribe** — transcribes the final video to get word-level timestamps for captions.
+10. **Captions** — burns word-synced captions (karaoke style or animated thought bubbles with sequential reveal).
+11. **Film grain** (if `--film-grain`) — applies grain/vintage noise effect.
+12. **Upload** — optionally uploads to YouTube Shorts with LLM-optimized metadata.
 
 **Veo flow** (`--visuals veo`):
 1. **Parse script** — same as above.
@@ -982,6 +1191,18 @@ python -m src.main story --script script.txt --visuals sd --art-style sketch
    - Sequential timestamps
 3. Output is in the exact timeline format story mode expects
 4. Use `--run` to render immediately, or `--output` to save and edit before rendering
+
+### Viral optimization
+
+The script generator uses proven engagement patterns:
+
+**Hook (first 3 seconds):** Uses one of 7 hook patterns — contrarian ("Everyone says X... they're wrong"), mystery, challenge, story loop, shock stat, direct attack, or promise. Creates an open loop that makes viewers stay.
+
+**Retention (middle):** Injects micro-hooks every 8-10 seconds ("But here's the thing..."). Uses the 1-2 punch (setup expectation → subvert it). Short punchy sentences (max 15 words). Escalating emotional intensity.
+
+**Ending (last scene):** Uses one of 5 ending patterns — callback to opening, cliff question, emotional peak, identity shift, or action call. Last line is quotable. Speech rate slows for impact.
+
+**Visual storytelling:** Character's pose matches narration (struggle → kneeling, hope → standing tall). Environment evolves with emotional arc. Key symbol evolves through the story.
 
 ---
 

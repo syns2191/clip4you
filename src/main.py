@@ -580,7 +580,7 @@ def main():
                               default="download",
                               help="Visual source: download (stock/YouTube), openai (DALL-E 3), sd (Stable Diffusion local), veo (Google Veo AI video)")
     story_parser.add_argument("--art-style", type=str, default="",
-                              choices=["", "pen", "pencil", "watercolor", "anime", "cinematic", "oil",
+                              choices=["", "pen", "pencil", "watercolor", "anime", "ghibli", "cinematic", "oil",
                                        "comic", "minimal", "pixel", "charcoal", "storybook", "realistic", "stickfigure", "sketch"],
                               help="Art style for AI-generated images (default: auto from category)")
     story_parser.add_argument("--image-category", type=str, default="",
@@ -588,6 +588,29 @@ def main():
                                        "history", "scifi", "nature", "adventure", "comedy", "mystery",
                                        "documentary", "fairytale", "gaming", "zen", "anime"],
                               help="Image category — auto-selects best art style and mood")
+    story_parser.add_argument("--animation", type=str, default="ken-burns",
+                              choices=["zoom-in", "zoom-out", "pan-left", "pan-right",
+                                       "pan-up", "pan-down", "zoom-pan", "ken-burns", "static"],
+                              help="Image animation style (default: ken-burns = varies per scene)")
+    story_parser.add_argument("--film-grain", type=str, default="",
+                              choices=["", "light", "medium", "heavy", "vintage",
+                                       "35mm", "gritty", "noise-overlay", "retro"],
+                              help="Add film effect: light/medium/heavy grain, vintage, 35mm, gritty, noise-overlay, or retro")
+    story_parser.add_argument("--caption-style", type=str, default="default",
+                              choices=["default", "bubble"],
+                              help="Caption style: default (karaoke text) or bubble (thought bubbles)")
+    story_parser.add_argument("--caption-font", type=str, default="",
+                              choices=["", "futura", "impact", "arial-black", "georgia",
+                                       "trebuchet", "verdana", "din", "chalkduster",
+                                       "comic-sans", "times", "croissant-one"],
+                              help="Caption font style (default: futura for captions, georgia for bubbles)")
+    story_parser.add_argument("--caption-animation", type=str, default="karaoke",
+                              choices=["karaoke", "word", "typing"],
+                              help="Caption animation: karaoke (highlight active word), word (words appear one by one), typing (character by character)")
+    story_parser.add_argument("--hook-text", type=str, default="",
+                              help="Add hook/summary text overlay on intro. Use 'auto' for AI-generated, or provide your own text (max 6 words)")
+    story_parser.add_argument("--review-images", action="store_true",
+                              help="Review generated images and regenerate specific scenes before rendering")
     story_parser.add_argument("--upload", action="store_true",
                               help="Upload to YouTube Shorts after rendering")
     story_parser.add_argument("--upload-privacy", choices=["private", "unlisted", "public"],
@@ -766,6 +789,13 @@ def main():
             visuals=args.visuals,
             art_style=getattr(args, 'art_style', ''),
             image_category=getattr(args, 'image_category', ''),
+            animation=getattr(args, 'animation', 'ken-burns'),
+            film_grain=getattr(args, 'film_grain', ''),
+            caption_style=getattr(args, 'caption_style', 'default'),
+            caption_font=getattr(args, 'caption_font', ''),
+            caption_animation=getattr(args, 'caption_animation', 'karaoke'),
+            hook_text=getattr(args, 'hook_text', ''),
+            review_images=getattr(args, 'review_images', False),
         )
 
         if args.upload and final_path:

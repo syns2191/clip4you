@@ -44,6 +44,11 @@ ART_STYLES = {
         "prompt": "anime illustration, Studio Ghibli style, beautiful anime art, detailed anime drawing, soft lighting, vibrant anime colors, high quality anime",
         "negative": "photograph, realistic, 3d render, western cartoon",
     },
+    "ghibli": {
+        "name": "Studio Ghibli",
+        "prompt": "Pencil Sketch Drawing, (Studio ghibli style, Art by Hayao Miyazaki:1.2), Anime Style, Manga Style, Hand drawn, cinematic, Sharp focus, humorous illustration, big depth of field, Masterpiece, concept art, trending on artstation, Vivid colors, Simplified style, trending on ArtStation, trending on CGSociety, Intricate, Vibrant colors, Soft Shading, Simplistic Features, Sharp Angles, Playful, black and white drawing, graphite drawing",
+        "negative": "ugly, deformed, noisy, blurry, low contrast",
+    },
     "cinematic": {
         "name": "Cinematic Digital Art",
         "prompt": "cinematic digital painting, dramatic lighting, highly detailed, vibrant colors, epic atmosphere, concept art, artstation trending, masterpiece",
@@ -94,10 +99,10 @@ ART_STYLES = {
         "prompt": "Pencil Sketch Drawing, <lora:animeoutlineV4_16:1>, black and white drawing, graphite drawing",
         "negative": "ugly, deformed, noisy, blurry, low contrast",
         "sd_override": {
-            "steps": 15,
+            "steps": 8,
             "sampler_name": "DPM++ 2M",
             "scheduler": "Karras",
-            "cfg_scale": 2,
+            "cfg_scale": 1.5,
         },
     },
 }
@@ -291,10 +296,10 @@ def generate_stable_diffusion(prompt: str, output_path: str, width: int = SD_WID
         "negative_prompt": negative_prompt,
         "width": width,
         "height": height,
-        "steps": 25,
-        "cfg_scale": 7,
-        "sampler_name": "Euler a",
-        "scheduler": "Automatic",
+        "steps": 8,
+        "cfg_scale": 1.5,
+        "sampler_name": "DPM++ 2M",
+        "scheduler": "Karras",
         "batch_size": 1,
     }
 
@@ -438,16 +443,26 @@ def generate_scene_image(
         shutil.copy2(cached_path, output_path)
         return True
 
-    print(f"      Generating image prompt with AI...")
-    image_prompt = _enhance_prompt_with_llm(scene_text, search_query, art_style=art_style, category=category)
-    print(f"      Prompt: {image_prompt[:120]}...")
-
-    # Resolve negative prompt from style
+    # Resolve style
     style_key = art_style
     if not style_key and category and category in CATEGORY_STYLES:
         style_key = CATEGORY_STYLES[category]["style"]
     style = ART_STYLES.get(style_key)
     neg = style["negative"] + ", text, watermark, nsfw" if style else ""
+
+    # Check if search_query is already a detailed SD prompt (from scriptgen)
+    is_detailed = ":1." in search_query or (len(search_query) > 80 and search_query.count(",") > 3)
+
+    if is_detailed:
+        image_prompt = search_query
+        if style and style["prompt"] not in image_prompt:
+            image_prompt += f", {style['prompt']}"
+        print(f"      Using script visual directly")
+        print(f"      Prompt: {image_prompt[:120]}...")
+    else:
+        print(f"      Generating image prompt with AI...")
+        image_prompt = _enhance_prompt_with_llm(scene_text, search_query, art_style=art_style, category=category)
+        print(f"      Prompt: {image_prompt[:120]}...")
 
     if provider == "openai":
         print(f"      Generating with OpenAI...")

@@ -36,6 +36,7 @@ markdown-it-py==4.2.0
 mdurl==0.1.2
 multidict==6.7.1
 numpy==2.4.6
+opencv-python-headless
 openai==2.43.0
 onnxruntime==1.27.0
 packaging==26.2

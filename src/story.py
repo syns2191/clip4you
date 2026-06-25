@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from .config import settings
-from .render import FFMPEG, reframe_vertical, burn_captions
+from .render import FFMPEG, reframe_vertical, burn_captions, add_film_grain, add_text_hook, burn_thought_bubbles, detect_head_position
 from .narration import generate_narration, generate_silence, is_silent_scene, SentenceTiming, POPULAR_VOICES, MOOD_VOICE_SETTINGS
 from .transcribe import transcribe, transcribe_audio, Word
 from .captions import build_ass
@@ -67,6 +67,17 @@ class Scene:
     mood: Optional[str] = None
     timings: List[SentenceTiming] = field(default_factory=list)
     words: List[Word] = field(default_factory=list)
+    head_pos: Optional[tuple] = None
+
+
+@dataclass
+class BubbleGroup:
+    group_idx: int
+    side: str
+    chunks: list
+    group_start: float
+    group_end: float
+    head_pos: Optional[tuple] = None
 
 
 def _parse_timestamp(ts: str) -> float:
@@ -266,6 +277,51 @@ def _generate_search_queries(scenes: List[Scene]) -> None:
                 scene.search_query = "cinematic background"
 
 
+def _generate_hook_text(script: str) -> str:
+    """Use LLM to generate a short hook/summary text for the video intro overlay."""
+    prompt = (
+        "You are an expert short-form video editor. Given the following narration script, "
+        "write a single short hook line (max 6 words) that would appear as "
+        "a text overlay at the start of the video to grab the viewer's attention.\n\n"
+        "The hook should tease the core topic or create curiosity. "
+        "Use natural capitalization (capitalize first letter only, not all caps). "
+        "Examples: 'The truth nobody tells you', 'Why most people fail', "
+        "'This changed everything'\n\n"
+        f"Script:\n{script}\n\n"
+        "Return ONLY the hook text, nothing else. Max 6 words."
+    )
+
+    try:
+        if settings.llm_provider == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+            response = client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=50,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        elif settings.llm_provider == "groq":
+            from groq import Groq
+            client = Groq(api_key=settings.groq_api_key)
+            response = client.chat.completions.create(
+                model=settings.groq_model,
+                max_tokens=50,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = response.choices[0].message.content.strip()
+        else:
+            return ""
+    except Exception:
+        return ""
+
+    hook = raw.strip().strip('"').strip("'")
+    words = hook.split()
+    if len(words) > 6:
+        hook = " ".join(words[:6])
+    return hook
+
+
 def _download_youtube_clip(query: str, output_path: str, max_duration: int = 30) -> bool:
     """Search and download a short clip from YouTube."""
     search_cmd = [
@@ -422,19 +478,61 @@ def _download_pexels_video(query: str, output_path: str) -> bool:
         return False
 
 
-def _image_to_video(image_path: str, duration: float, output_path: str) -> None:
-    """Convert a static image to a video without stretching.
-    Uses blurred background fill + centered image with slow Ken Burns zoom."""
+ANIMATION_PRESETS = [
+    "zoom-in", "zoom-out", "pan-left", "pan-right",
+    "pan-up", "pan-down", "zoom-pan", "ken-burns", "static",
+]
+
+_KEN_BURNS_CYCLE = ["zoom-in", "pan-right", "zoom-out", "pan-left", "zoom-pan", "pan-up"]
+_ken_burns_idx = 0
+
+
+def _get_zoompan_expr(animation: str, frames: int, w: int, h: int) -> str:
+    """Build the zoompan filter expression for a given animation preset."""
+    d = frames
+    zoom_in_step = 0.2 / max(d, 1)
+    zoom_out_step = 0.3 / max(d, 1)
+    if animation == "zoom-in":
+        return f"zoompan=z='min(zoom+{zoom_in_step:.6f},1.2)':d={d}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps=25"
+    elif animation == "zoom-out":
+        return f"zoompan=z='if(eq(on,1),1.3,max(zoom-{zoom_out_step:.6f},1.0))':d={d}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps=25"
+    elif animation == "pan-left":
+        return f"zoompan=z=1.1:d={d}:x='iw*0.15*(1-on/{d})':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps=25"
+    elif animation == "pan-right":
+        return f"zoompan=z=1.1:d={d}:x='iw*0.15*on/{d}':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps=25"
+    elif animation == "pan-up":
+        return f"zoompan=z=1.1:d={d}:x='iw/2-(iw/zoom/2)':y='ih*0.15*(1-on/{d})':s={w}x{h}:fps=25"
+    elif animation == "pan-down":
+        return f"zoompan=z=1.1:d={d}:x='iw/2-(iw/zoom/2)':y='ih*0.15*on/{d}':s={w}x{h}:fps=25"
+    elif animation == "zoom-pan":
+        return f"zoompan=z='min(zoom+{zoom_in_step:.6f},1.2)':d={d}:x='iw*0.1*on/{d}':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps=25"
+    else:  # static
+        return f"zoompan=z=1:d={d}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}:fps=25"
+
+
+def _image_to_video(image_path: str, duration: float, output_path: str, animation: str = "ken-burns") -> None:
+    """Convert a static image to a video with selectable animation effect."""
+    global _ken_burns_idx
     w = settings.vertical_width
     h = settings.vertical_height
     frames = int(duration * 25)
+
+    # Ken Burns mode cycles through different effects per scene
+    if animation == "ken-burns":
+        actual = _KEN_BURNS_CYCLE[_ken_burns_idx % len(_KEN_BURNS_CYCLE)]
+        _ken_burns_idx += 1
+    else:
+        actual = animation
+
+    zoompan_expr = _get_zoompan_expr(actual, frames, w, h)
+
     vf = (
         f"split[bg][fg];"
         f"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,"
         f"crop={w}:{h},boxblur=25:5[blurred];"
         f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[scaled];"
         f"[blurred][scaled]overlay=(W-w)/2:(H-h)/2[composed];"
-        f"[composed]zoompan=z='min(zoom+0.0008,1.15)':d={frames}:s={w}x{h}:fps=25,"
+        f"[composed]{zoompan_expr},"
         f"format=yuv420p"
     )
     cmd = [
@@ -699,6 +797,13 @@ def create_story(
     visuals: str = "download",
     art_style: str = "",
     image_category: str = "",
+    animation: str = "ken-burns",
+    film_grain: str = "",
+    caption_style: str = "default",
+    caption_font: str = "",
+    caption_animation: str = "karaoke",
+    hook_text: str = "",
+    review_images: bool = False,
 ) -> str:
     """Create a short narrated video from a script.
 
@@ -710,6 +815,18 @@ def create_story(
     scenes = _split_into_scenes(script)
     has_timeline = any(s.duration > 0 for s in scenes)
     print(f"   {len(scenes)} scenes identified" + (" (with timeline)" if has_timeline else ""))
+
+    resolved_hook = ""
+    if hook_text == "auto":
+        print("-> Generating intro hook text...")
+        resolved_hook = _generate_hook_text(script)
+        if resolved_hook:
+            print(f'   Hook: "{resolved_hook}"')
+        else:
+            print("   Warning: could not generate hook text")
+    elif hook_text:
+        resolved_hook = hook_text
+        print(f'-> Using custom hook text: "{resolved_hook}"')
 
     use_veo_audio = (visuals == "veo")
 
@@ -753,16 +870,14 @@ def create_story(
                 s_pitch = "+0Hz"
                 s_mood = ""
 
-                # Mood sets voice + pitch + rate for real intonation change
+                # Mood changes intonation (pitch + rate) only, keeps the same voice actor
                 if scene.mood and scene.mood in MOOD_VOICE_SETTINGS:
                     ms = MOOD_VOICE_SETTINGS[scene.mood]
-                    s_voice = ms["voice"]
                     s_rate = ms["rate"]
                     s_pitch = ms["pitch"]
                     s_mood = scene.mood
                 elif scene.mood and scene.mood in MOOD_PRESETS:
                     preset = MOOD_PRESETS[scene.mood]
-                    s_voice = POPULAR_VOICES.get(preset["voice"], preset["voice"])
                     s_rate = preset["rate"]
 
                 # Explicit voice/rate override from script line
@@ -831,6 +946,7 @@ def create_story(
                     "pencil": "pencil sketch drawing",
                     "watercolor": "watercolor painting art",
                     "anime": "anime illustration art",
+                    "ghibli": "studio ghibli anime art",
                     "cinematic": "cinematic dramatic photography",
                     "oil": "oil painting classical art",
                     "comic": "comic book illustration",
@@ -862,15 +978,11 @@ def create_story(
         if _style_suffix:
             print(f"   Visual theme: \"{_style_suffix.strip()}\" (applied to all searches)")
 
-        for i, scene in enumerate(scenes):
-            styled_query = scene.search_query + _style_suffix
-            print(f"   Scene {i+1}/{len(scenes)}: \"{styled_query}\" ({scene.duration:.1f}s)")
-            visual_path = os.path.join(tmp, f"visual_{i:02d}")
-            video_path = os.path.join(tmp, f"scene_video_{i:02d}.mp4")
-            subtitled_path = os.path.join(tmp, f"scene_sub_{i:02d}.mp4")
+        def _generate_scene_visual(i, scene, visual_path, video_path, styled_query):
+            """Generate or download visual for a single scene. Returns (got_visual, img_path_or_None)."""
             got_visual = False
+            scene_img_path = None
 
-            # AI-generated visuals
             if use_ai_visuals:
                 if visuals == "veo":
                     veo_path = visual_path + "_veo.mp4"
@@ -881,11 +993,15 @@ def create_story(
                 else:
                     ai_img_path = visual_path + "_ai.png"
                     if generate_scene_image(scene.text, scene.search_query, ai_img_path, provider=visuals, art_style=art_style, category=image_category):
-                        _image_to_video(ai_img_path, scene.duration, video_path)
+                        if caption_style == "bubble":
+                            scene.head_pos = detect_head_position(ai_img_path, video_w=settings.vertical_width, video_h=settings.vertical_height)
+                            if scene.head_pos:
+                                print(f"      [Face detected at {scene.head_pos}]")
+                        scene_img_path = ai_img_path
+                        _image_to_video(ai_img_path, scene.duration, video_path, animation=animation)
                         got_visual = True
                         print(f"      [AI illustration generated]")
 
-            # Download mode or AI fallback — use styled_query for consistent theme
             if not got_visual and scene.visual_type == "video":
                 pexels_path = visual_path + "_pexels.mp4"
                 if _download_pexels_video(styled_query, pexels_path):
@@ -907,7 +1023,10 @@ def create_story(
             if not got_visual:
                 img_path = visual_path + ".jpg"
                 if _download_scene_image(styled_query, img_path):
-                    _image_to_video(img_path, scene.duration, video_path)
+                    if caption_style == "bubble" and not scene.head_pos:
+                        scene.head_pos = detect_head_position(img_path, video_w=settings.vertical_width, video_h=settings.vertical_height)
+                    scene_img_path = img_path
+                    _image_to_video(img_path, scene.duration, video_path, animation=animation)
                     got_visual = True
                     print(f"      [Image found]")
 
@@ -920,7 +1039,8 @@ def create_story(
                 fallback_queries.extend(_fallback_theme)
                 for fq in fallback_queries:
                     if _download_scene_image(fq, fallback_img):
-                        _image_to_video(fallback_img, scene.duration, video_path)
+                        scene_img_path = fallback_img
+                        _image_to_video(fallback_img, scene.duration, video_path, animation=animation)
                         got_visual = True
                         print(f"      [Fallback image: {fq}]")
                         break
@@ -929,7 +1049,122 @@ def create_story(
                 print(f"      [Text card - no visual found]")
                 _make_text_card(scene.text[:80], scene.duration, video_path)
 
+            return got_visual, scene_img_path
+
+        # Generate all scene visuals
+        scene_img_paths = []
+        for i, scene in enumerate(scenes):
+            styled_query = scene.search_query + _style_suffix
+            print(f"   Scene {i+1}/{len(scenes)}: \"{styled_query}\" ({scene.duration:.1f}s)")
+            visual_path = os.path.join(tmp, f"visual_{i:02d}")
+            video_path = os.path.join(tmp, f"scene_video_{i:02d}.mp4")
+            got_visual, img_path = _generate_scene_visual(i, scene, visual_path, video_path, styled_query)
+            scene_img_paths.append(img_path)
             scene_videos.append(video_path)
+
+        # Review & regenerate loop
+        if review_images and use_ai_visuals and visuals != "veo":
+            # Copy images to output dir for easy preview
+            review_dir = os.path.join(output_dir, "_review")
+            os.makedirs(review_dir, exist_ok=True)
+            for i, img_path in enumerate(scene_img_paths):
+                if img_path and os.path.exists(img_path):
+                    ext = os.path.splitext(img_path)[1] or ".png"
+                    preview_path = os.path.join(review_dir, f"scene_{i+1:02d}{ext}")
+                    shutil.copy2(img_path, preview_path)
+
+            # Open preview folder
+            print(f"\n   Preview images saved to: {review_dir}")
+            try:
+                subprocess.run(["open", review_dir], capture_output=True)
+            except Exception:
+                pass
+
+            while True:
+                print("\n" + "=" * 60)
+                print("  SCENE IMAGE REVIEW")
+                print("=" * 60)
+                for i, scene in enumerate(scenes):
+                    has_img = scene_img_paths[i] is not None
+                    text_preview = scene.text[:55]
+                    status = "OK" if has_img else "no img"
+                    print(f"  [{i+1}] [{status:6s}] \"{text_preview}\"")
+                print("=" * 60)
+                print("Commands:")
+                print("  2,4     — regenerate scenes 2 and 4")
+                print("  open 3  — open scene 3 image in Preview")
+                print("  open    — open review folder")
+                print("  done    — continue to render")
+                choice = input("> ").strip().lower()
+
+                if choice in ("done", "d", "ok", "continue", "c"):
+                    break
+
+                if choice == "open" or choice == "o":
+                    try:
+                        subprocess.run(["open", review_dir], capture_output=True)
+                    except Exception:
+                        pass
+                    continue
+
+                if choice.startswith("open ") or choice.startswith("o "):
+                    try:
+                        idx = int(choice.split()[-1]) - 1
+                        if 0 <= idx < len(scene_img_paths) and scene_img_paths[idx]:
+                            ext = os.path.splitext(scene_img_paths[idx])[1] or ".png"
+                            preview = os.path.join(review_dir, f"scene_{idx+1:02d}{ext}")
+                            if os.path.exists(preview):
+                                subprocess.run(["open", preview], capture_output=True)
+                            else:
+                                print(f"  No image for scene {idx+1}")
+                        else:
+                            print(f"  No image for scene {idx+1}")
+                    except (ValueError, IndexError):
+                        print("  Usage: open 3")
+                    continue
+
+                if not choice:
+                    continue
+
+                try:
+                    indices = [int(x.strip()) - 1 for x in choice.split(",")]
+                except ValueError:
+                    print("Invalid input. Type scene numbers (e.g. '2,4'), 'open 3', or 'done'.")
+                    continue
+
+                for idx in indices:
+                    if idx < 0 or idx >= len(scenes):
+                        print(f"  Scene {idx+1} out of range, skipping")
+                        continue
+                    scene = scenes[idx]
+                    styled_query = scene.search_query + _style_suffix
+                    print(f"\n   Regenerating scene {idx+1}...")
+                    visual_path = os.path.join(tmp, f"visual_{idx:02d}_regen")
+                    video_path = os.path.join(tmp, f"scene_video_{idx:02d}.mp4")
+
+                    # Clear cached image so SD generates a new one
+                    from .imagegen import _cache_key, CACHE_IMG_DIR
+                    cache_k = _cache_key(f"img:{visuals}:{art_style}:{image_category}:{scene.text}:{scene.search_query}")
+                    for ext in (".png", ".jpg", ".webp"):
+                        cached = os.path.join(CACHE_IMG_DIR, cache_k + ext)
+                        if os.path.exists(cached):
+                            os.unlink(cached)
+                            print(f"      [Cleared cached image]")
+
+                    got_visual, img_path = _generate_scene_visual(idx, scene, visual_path, video_path, styled_query)
+                    scene_img_paths[idx] = img_path
+                    scene_videos[idx] = video_path
+
+                    # Update preview
+                    if img_path and os.path.exists(img_path):
+                        ext = os.path.splitext(img_path)[1] or ".png"
+                        preview_path = os.path.join(review_dir, f"scene_{idx+1:02d}{ext}")
+                        shutil.copy2(img_path, preview_path)
+
+                print(f"\n   Regeneration complete.")
+
+            # Cleanup review dir
+            shutil.rmtree(review_dir, ignore_errors=True)
 
         # Concatenate all scene videos
         print("\n-> Stitching scenes with transitions...")
@@ -962,23 +1197,123 @@ def create_story(
                   original_volume=1.0, music_volume=music_volume)
         os.replace(music_out, final_path)
 
-    # Transcribe the final video and burn word-level captions (skip for Veo)
+    # Transcribe the final video and burn captions (skip for Veo)
     if not use_veo_audio:
         print("\n-> Transcribing final video for word-level captions...")
         try:
             segments = transcribe(final_path)
             words = [w for seg in segments for w in seg.words]
             if words:
-                ass_path = os.path.join(output_dir, "story_captions.ass")
-                build_ass(words, clip_start=0.0, output_path=ass_path)
-                captioned_path = final_path + ".captioned.mp4"
-                burn_captions(final_path, ass_path, captioned_path)
-                os.replace(captioned_path, final_path)
-                print(f"   Burned {len(words)} word-level captions")
+                if caption_style == "bubble":
+                    from .captions import WORDS_PER_CHUNK
+
+                    head_positions = [s.head_pos for s in scenes]
+                    cumulative = 0.0
+                    scene_times = []
+                    for s in scenes:
+                        scene_times.append((cumulative, cumulative + s.duration))
+                        cumulative += s.duration
+
+                    bubble_groups = []
+                    for scene_idx, (s_start, s_end) in enumerate(scene_times):
+                        scene_words = [w for w in words if w.start >= s_start and w.end <= s_end]
+                        if not scene_words:
+                            continue
+                        side = "left" if scene_idx % 2 == 0 else "right"
+                        head = head_positions[scene_idx] if scene_idx < len(head_positions) else None
+
+                        sub_chunks = []
+                        for ci in range(0, len(scene_words), WORDS_PER_CHUNK):
+                            chunk = scene_words[ci:ci + WORDS_PER_CHUNK]
+                            if not chunk:
+                                continue
+
+                            if caption_animation == "karaoke":
+                                text = " ".join(w.text for w in chunk)
+                                start = chunk[0].start
+                                end = chunk[-1].end
+                                if end > start:
+                                    sub_chunks.append((text, start, end))
+
+                            elif caption_animation == "word":
+                                for word_idx in range(len(chunk)):
+                                    text = " ".join(w.text for w in chunk[:word_idx + 1])
+                                    start = chunk[word_idx].start
+                                    end = chunk[word_idx + 1].start if word_idx + 1 < len(chunk) else chunk[-1].end
+                                    if end > start:
+                                        sub_chunks.append((text, start, end))
+
+                            else:  # typing
+                                for word_idx, word in enumerate(chunk):
+                                    w_start = word.start
+                                    w_end = word.end
+                                    if w_end <= w_start:
+                                        continue
+                                    prev_text = " ".join(w.text for w in chunk[:word_idx])
+                                    cur_word = word.text
+                                    n_chars = len(cur_word)
+                                    char_dur = (w_end - w_start) / max(n_chars, 1)
+                                    for char_i in range(1, n_chars + 1):
+                                        partial = cur_word[:char_i]
+                                        parts = [prev_text, partial] if prev_text else [partial]
+                                        text = " ".join(parts)
+                                        start = w_start + (char_i - 1) * char_dur
+                                        end = w_start + char_i * char_dur if char_i < n_chars else w_end
+                                        if end > start:
+                                            sub_chunks.append((text, start, end))
+                                if sub_chunks:
+                                    chunk_end = chunk[-1].end
+                                    last_text, last_start, last_end = sub_chunks[-1]
+                                    if last_start < chunk_end:
+                                        sub_chunks[-1] = (last_text, last_start, chunk_end)
+
+                        if sub_chunks:
+                            group_start = sub_chunks[0][1]
+                            group_end = sub_chunks[-1][2]
+                            bubble_groups.append(BubbleGroup(
+                                group_idx=scene_idx,
+                                side=side,
+                                chunks=sub_chunks,
+                                group_start=group_start,
+                                group_end=group_end,
+                                head_pos=head,
+                            ))
+
+                    detected = sum(1 for h in head_positions if h)
+                    print(f"   Burning {len(bubble_groups)} animated thought bubbles ({detected}/{len(scenes)} faces detected)...")
+                    captioned_path = final_path + ".captioned.mp4"
+                    burn_thought_bubbles(
+                        final_path, captioned_path, bubble_groups,
+                        tmp_dir=output_dir,
+                        caption_font=caption_font,
+                    )
+                    os.replace(captioned_path, final_path)
+                else:
+                    ass_path = os.path.join(output_dir, "story_captions.ass")
+                    build_ass(words, clip_start=0.0, output_path=ass_path, caption_font=caption_font, caption_animation=caption_animation)
+                    captioned_path = final_path + ".captioned.mp4"
+                    burn_captions(final_path, ass_path, captioned_path)
+                    os.replace(captioned_path, final_path)
+                    print(f"   Burned {len(words)} word-level captions")
             else:
                 print("   No words detected, skipping captions")
         except Exception as e:
             print(f"   Warning: caption transcription failed ({e}), video saved without captions")
+
+    # Apply hook text overlay on intro
+    if resolved_hook:
+        print(f"-> Adding hook text overlay to intro...")
+        hook_duration = min(scenes[0].duration if scenes else 5.0, 5.0)
+        hooked_path = final_path + ".hooked.mp4"
+        add_text_hook(final_path, resolved_hook, hooked_path, clip_duration=hook_duration, caption_font=caption_font)
+        os.replace(hooked_path, final_path)
+
+    # Apply film grain effect
+    if film_grain:
+        print(f"-> Applying {film_grain} film grain effect...")
+        grain_path = final_path + ".grain.mp4"
+        add_film_grain(final_path, grain_path, intensity=film_grain)
+        os.replace(grain_path, final_path)
 
     print(f"\n-> Story video saved: {final_path}")
     return final_path

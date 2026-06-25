@@ -34,12 +34,57 @@ RULES:
 10. The script must tell a complete story arc: hook → buildup → climax → resolution
 11. Every line must grab attention — no filler, no boring transitions
 
-ENGAGEMENT RULES:
-- Open with a bold statement or question that makes the viewer stay
-- Use "you" language — speak directly to the viewer
-- Build tension — each scene should raise the stakes
-- Include at least one twist or unexpected perspective
-- End with a powerful closing line that lingers
+VISUAL STORYTELLING (CRITICAL — the images must tell a CONNECTED visual story):
+- Think of the visuals as a CAMERA FOLLOWING the character through a journey
+- Scene 1→2→3 should flow like a continuous visual narrative, not random independent images
+- The character's POSE and ACTION must reflect what the narration says:
+  * Struggle/defeat → character kneeling, head bowed, hands in mud, slumped against wall
+  * Hope/resolution → character standing tall, chin up, looking at horizon, arms open
+  * Reflection/thinking → character sitting still, looking at water/mirror, journal open
+  * Loss/sadness → character alone, back turned, empty space beside them, head down
+  * Action/determination → character walking forward, climbing, pushing through
+- The ENVIRONMENT should evolve with the emotional arc:
+  * Stay in the SAME world throughout (e.g. all scenes on a coastline, or all in a forest)
+  * Shift the specific spot scene by scene (beach → cliff → rocks → shore → sunset)
+  * Dark/enclosed/stormy for tension → open/bright/golden for hope and resolution
+  * Lighting shifts: dim shadows early → warm golden light at the end
+- VISUAL PROGRESSION:
+  * Each scene's image = the NEXT FRAME in a visual journey, not a random photo
+  * The character physically MOVES through the environment scene by scene
+  * Include ONE KEY OBJECT or SYMBOL that evolves with the story (e.g. crumpled paper → smooth page, broken chain → open hands, extinguished candle → burning flame)
+  * NEVER repeat the exact same pose or composition in two scenes
+  * Each visual must show ONE clear action or gesture that directly matches the narration text
+
+HOOK (first 3 seconds — viewer decides to stay or swipe):
+- Use ONE of these proven hook patterns:
+  * CONTRARIAN: "Everyone tells you to [common advice]... they're wrong."
+  * MYSTERY: "There's something about [topic] that nobody talks about."
+  * CHALLENGE: "You've been doing [thing] wrong your entire life."
+  * STORY LOOP: "A [person] once said something that changed everything."
+  * SHOCK STAT: "97% of people will never [achieve thing]. Here's why."
+  * DIRECT ATTACK: "If you [relatable bad habit], this is for you."
+  * PROMISE: "In the next 60 seconds, you'll understand [powerful insight]."
+- The first sentence MUST create an open loop — a question the viewer needs answered
+- NEVER start with context or background. Start with the punch.
+
+RETENTION (middle — keep the viewer watching):
+- Every 8-10 seconds, inject a micro-hook: "But here's the thing...", "And this is where it gets interesting...", "Wait..."
+- Use the "1-2 punch": setup an expectation, then subvert it
+- Increase emotional intensity scene by scene — never plateau
+- Use short, punchy sentences. Max 15 words per sentence.
+- Add contrast: pair a dark moment with a light one, silence with action
+- Ask rhetorical questions that make the viewer answer in their head
+
+ENDING (last scene — make them share/comment/follow):
+- Use ONE of these ending patterns:
+  * CALLBACK: Return to the opening hook and answer it with a twist
+  * CLIFF: End with an unresolved question: "So ask yourself... what are you waiting for?"
+  * EMOTIONAL PEAK: The most powerful line of the entire script. Make it hit.
+  * IDENTITY SHIFT: "You are not [old identity]. You are [new identity]."
+  * ACTION: End with a specific action the viewer can take right now
+- The last sentence should be QUOTABLE — something viewers screenshot or repeat
+- Slow the speech rate on the final line (-25% or slower) for maximum impact
+- NEVER end with generic advice like "be yourself" or "just do it"
 
 {character_section}
 
@@ -233,6 +278,7 @@ ART_STYLE_TEMPLATES = {
     "watercolor": "watercolor painting, soft washes, flowing colors, paper texture",
     "cinematic": "cinematic, dramatic lighting, highly detailed, vibrant colors",
     "anime": "anime illustration, Studio Ghibli style, vibrant anime colors",
+    "ghibli": "Studio Ghibli style, Art by Hayao Miyazaki, hand drawn, cinematic, vivid colors, soft shading, playful",
     "oil": "classical oil painting, rich colors, visible brushstrokes, canvas texture",
     "minimal": "minimalist illustration, clean lines, simple shapes, negative space",
     "charcoal": "charcoal drawing, dramatic shadows, smudged edges, high contrast",
