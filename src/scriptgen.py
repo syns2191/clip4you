@@ -30,9 +30,13 @@ RULES:
 6. Mood must be one of: cinematic, dramatic, calm, tense, melancholic, hopeful, cheerful, sad, excited, whisper
 7. Rate controls speech speed: -10% to -25% (slower = more dramatic)
 8. First line should be a silent intro: 0:00| [INTRO] — silence — | ... | image | cinematic | -20%
-9. Total duration should be {duration} seconds ({num_scenes} scenes)
-10. The script must tell a complete story arc: hook → buildup → climax → resolution
-11. Every line must grab attention — no filler, no boring transitions
+9. Last line should be a silent outro: TIMESTAMP | — silence — | VISUAL DESCRIPTION | image | cinematic | -25%
+   The outro MUST have a full visual description — a powerful closing image that matches the story's resolution.
+   NEVER leave the visual description empty on any line.
+10. Total duration should be {duration} seconds ({num_scenes} scenes)
+11. The script must tell a complete story arc: hook → buildup → climax → resolution
+12. Every line must grab attention — no filler, no boring transitions
+13. EVERY line must have a visual description — no empty visual fields
 
 VISUAL STORYTELLING (CRITICAL — the images must tell a CONNECTED visual story):
 - Think of the visuals as a CAMERA FOLLOWING the character through a journey

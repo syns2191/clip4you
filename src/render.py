@@ -196,6 +196,131 @@ def add_text_hook(
     os.unlink(hook_png)
 
 
+FOOTNOTE_FONT_PATH = "/System/Library/Fonts/Supplemental/Georgia.ttf"
+FOOTNOTE_FONT_BOLD = "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
+
+
+def _render_footnote_png(
+    text: str,
+    output_path: str,
+    canvas_w: int = 1080,
+    canvas_h: int = 1920,
+    caption_font: str = "",
+) -> None:
+    font_path = FOOTNOTE_FONT_PATH
+    font_bold_path = FOOTNOTE_FONT_BOLD
+    if caption_font:
+        from .captions import CAPTION_FONTS
+        if caption_font in CAPTION_FONTS:
+            font_path = CAPTION_FONTS[caption_font].get("fallback", font_path)
+            font_bold_path = CAPTION_FONTS[caption_font]["file"]
+
+    try:
+        font_main = ImageFont.truetype(font_bold_path, size=38)
+    except (OSError, IOError):
+        font_main = ImageFont.load_default()
+    try:
+        font_sub = ImageFont.truetype(font_path, size=26)
+    except (OSError, IOError):
+        font_sub = font_main
+
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    if not lines:
+        return
+
+    img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    dummy = Image.new("RGBA", (1, 1))
+    dd = ImageDraw.Draw(dummy)
+
+    line_data = []
+    total_h = 0
+    line_gap = 14
+    for i, line in enumerate(lines):
+        font = font_main if i == 0 else font_sub
+        bbox = dd.textbbox((0, 0), line, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        line_data.append((line, font, tw, th, bbox))
+        total_h += th
+    total_h += line_gap * (len(lines) - 1)
+
+    pad_x, pad_y = 50, 30
+    max_tw = max(ld[2] for ld in line_data)
+    box_w = min(max_tw + pad_x * 2, canvas_w - 80)
+    box_h = total_h + pad_y * 2
+
+    box_x = (canvas_w - box_w) // 2
+    box_y = canvas_h - box_h - 180
+
+    bg = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    bg_draw = ImageDraw.Draw(bg)
+    bg_draw.rounded_rectangle(
+        [box_x, box_y, box_x + box_w, box_y + box_h],
+        radius=16,
+        fill=(0, 0, 0, 160),
+    )
+    img = Image.alpha_composite(img, bg)
+    draw = ImageDraw.Draw(img)
+
+    divider_y = None
+    cursor_y = box_y + pad_y
+    for i, (line, font, tw, th, bbox) in enumerate(line_data):
+        tx = box_x + (box_w - tw) // 2 - bbox[0]
+        ty = cursor_y - bbox[1]
+        color = (255, 255, 255, 255) if i == 0 else (200, 200, 200, 230)
+        draw.text((tx, ty), line, font=font, fill=color)
+        cursor_y += th + line_gap
+        if i == 0 and len(lines) > 1:
+            divider_y = cursor_y - line_gap // 2
+
+    if divider_y:
+        inset = 40
+        draw.line(
+            [(box_x + inset, divider_y), (box_x + box_w - inset, divider_y)],
+            fill=(255, 255, 255, 60), width=1,
+        )
+
+    img.save(output_path, "PNG")
+
+
+def burn_footnote(
+    input_path: str,
+    output_path: str,
+    footnote_text: str,
+    video_duration: float,
+    outro_duration: float,
+    caption_font: str = "",
+) -> None:
+    footnote_png = output_path + ".footnote.png"
+    try:
+        _render_footnote_png(footnote_text, footnote_png, caption_font=caption_font)
+    except Exception:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return
+
+    appear_at = max(0, video_duration - outro_duration)
+    fade_dur = 0.6
+
+    vf = (
+        f"[1:v]format=rgba,fade=t=in:st={appear_at:.2f}:d={fade_dur:.2f}:alpha=1[fn];"
+        f"[0:v][fn]overlay=0:0:enable='gte(t,{appear_at:.2f})'"
+    )
+    _run(
+        [
+            FFMPEG, "-y",
+            "-i", input_path,
+            "-i", footnote_png,
+            "-filter_complex", vf,
+            "-c:a", "copy",
+            output_path,
+        ]
+    )
+    os.unlink(footnote_png)
+
+
 def _render_emoji_png(emoji: str, output_path: str, size: int = 200) -> None:
     """Render a single emoji to a transparent PNG using macOS native text rendering."""
     swift_code = f'''
@@ -529,6 +654,100 @@ def detect_head_position(image_path: str, video_w: int = None, video_h: int = No
         return None
 
 
+def click_head_position(
+    image_path: str,
+    video_w: int = 1080,
+    video_h: int = 1920,
+    current_head_pos: tuple = None,
+) -> tuple:
+    """Open image in a native macOS window. User clicks on the head. Returns (x, y) or None."""
+    img = Image.open(image_path)
+    img_w, img_h = img.size
+
+    preview_path = image_path + ".headtag.png"
+    img_resized = img.convert("RGB").resize((video_w, video_h), Image.LANCZOS)
+    if current_head_pos:
+        draw = ImageDraw.Draw(img_resized)
+        hx, hy = current_head_pos
+        draw.line([(hx - 30, hy), (hx + 30, hy)], fill=(255, 0, 0), width=3)
+        draw.line([(hx, hy - 30), (hx, hy + 30)], fill=(255, 0, 0), width=3)
+        draw.ellipse([hx - 8, hy - 8, hx + 8, hy + 8], outline=(255, 0, 0), width=2)
+    img_resized.save(preview_path, "PNG")
+
+    max_h = 900
+    scale = min(1.0, max_h / video_h)
+    win_w = int(video_w * scale)
+    win_h = int(video_h * scale)
+
+    swift_code = f'''
+import AppKit
+
+class ClickView: NSImageView {{
+    var clickPoint: NSPoint? = nil
+    var videoW: CGFloat = {video_w}
+    var videoH: CGFloat = {video_h}
+    var displayScale: CGFloat = {scale}
+
+    override func mouseDown(with event: NSEvent) {{
+        let loc = convert(event.locationInWindow, from: nil)
+        let imgX = loc.x / displayScale
+        let imgY = (CGFloat({win_h}) - loc.y) / displayScale
+        let clampedX = max(0, min(imgX, videoW))
+        let clampedY = max(0, min(imgY, videoH))
+        print("HEADPOS:\\(Int(clampedX)),\\(Int(clampedY))")
+        fflush(stdout)
+        NSApplication.shared.terminate(nil)
+    }}
+}}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+
+let imgPath = "{preview_path}"
+guard let image = NSImage(contentsOfFile: imgPath) else {{
+    print("HEADPOS:FAIL")
+    exit(1)
+}}
+
+let winRect = NSRect(x: 200, y: 100, width: {win_w}, height: {win_h})
+let win = NSWindow(contentRect: winRect,
+                   styleMask: [.titled, .closable],
+                   backing: .buffered, defer: false)
+win.title = "Click on the head — Scene image"
+win.isReleasedWhenClosed = false
+
+let view = ClickView(frame: NSRect(x: 0, y: 0, width: {win_w}, height: {win_h}))
+view.image = image
+view.imageScaling = .scaleProportionallyUpOrDown
+win.contentView = view
+win.makeKeyAndOrderFront(nil)
+app.activate(ignoringOtherApps: true)
+app.run()
+'''
+
+    try:
+        result = subprocess.run(
+            ["swift", "-e", swift_code],
+            capture_output=True, text=True, timeout=120,
+        )
+        for line in result.stdout.strip().split("\n"):
+            if line.startswith("HEADPOS:"):
+                val = line.split(":", 1)[1]
+                if val == "FAIL":
+                    return None
+                parts = val.split(",")
+                x, y = int(parts[0]), int(parts[1])
+                return (x, y)
+    except (subprocess.TimeoutExpired, Exception):
+        pass
+    finally:
+        try:
+            os.unlink(preview_path)
+        except OSError:
+            pass
+    return None
+
+
 def _ease_out_back(x: float, c: float = 2.5) -> float:
     c1 = c + 1
     return 1 + c1 * (x - 1) ** 3 + c * (x - 1) ** 2
@@ -570,12 +789,23 @@ def _compute_dot_positions(tail_anchor: tuple, cloud_center: tuple,
     cross_sign = 1.0 if side == "right" else -1.0
     px, py = -uy * cross_sign, ux * cross_sign
 
+    total_needed = radii[0]
+    for i in range(1, len(radii)):
+        total_needed += gap + radii[i - 1] + radii[i]
+    total_needed += radii[-1] + gap
+
+    start_offset = radii[0] + gap * 0.5
+    if dist > total_needed + 20:
+        spacing_scale = 1.0
+    else:
+        spacing_scale = max(0.5, (dist - 20) / total_needed) if total_needed > 0 else 1.0
+
     positions = []
-    cursor_x = ax + ux * (radii[0] + gap)
-    cursor_y = ay + uy * (radii[0] + gap)
+    cursor_x = ax + ux * start_offset
+    cursor_y = ay + uy * start_offset
     positions.append((cursor_x, cursor_y))
     for i in range(1, len(radii)):
-        step = radii[i - 1] + gap + radii[i]
+        step = (radii[i - 1] + gap + radii[i]) * spacing_scale
         drift = step * 0.35
         cursor_x += ux * step + px * drift
         cursor_y += uy * step + py * drift
@@ -690,36 +920,51 @@ def _compute_bubble_geometry(text: str, canvas_w: int, canvas_h: int,
     ry = ref_ry * sc
 
     margin = 60
+    dot_radii_base = [5, 9, 14]
+    dot_radii = [r * sc for r in dot_radii_base]
+    gap = int(6 * sc)
+    total_dot_span = sum(dot_radii) * 2 + gap * len(dot_radii) + 30
+    cloud_height = int(ry * 2) + 40
+    needed_above = cloud_height + total_dot_span + margin
 
     if head_pos:
         hx, hy = head_pos
-        bx = hx - bubble_w // 2
-        by = hy - bubble_h - 120
-        bx = max(margin, min(bx, canvas_w - bubble_w - margin))
-        by = max(margin, min(by, canvas_h // 3))
-    else:
-        bx = (canvas_w - bubble_w) // 2
-        by = max(margin, 100)
+        head_high = hy < needed_above
 
-    cloud_cx = bx + bubble_w // 2
-    cloud_cy = by + bubble_h // 2
+        if head_high:
+            clearance = int(rx) + total_dot_span + 40
+            can_right = (hx + clearance + int(rx) + margin) <= canvas_w
+            can_left = (hx - clearance - int(rx) - margin) >= 0
+            space_right = canvas_w - hx
+            space_left = hx
+
+            if can_right and (not can_left or space_right >= space_left):
+                cloud_cx = hx + clearance
+                cloud_cy = max(margin + int(ry), hy)
+                tail_anchor = (hx + 30, hy)
+            elif can_left:
+                cloud_cx = hx - clearance
+                cloud_cy = max(margin + int(ry), hy)
+                tail_anchor = (hx - 30, hy)
+            else:
+                cloud_cy = hy + int(ry) + total_dot_span + 60
+                cloud_cy = min(cloud_cy, canvas_h - margin - int(ry))
+                cloud_cx = hx
+                tail_anchor = (hx, hy + 30)
+        else:
+            cloud_cy = hy - int(ry) - total_dot_span - 40
+            cloud_cy = max(margin + int(ry), cloud_cy)
+            cloud_cx = hx
+            tail_anchor = (hx, hy - 30)
+    else:
+        cloud_cx = canvas_w // 2
+        cloud_cy = max(margin + int(ry), canvas_h // 4)
+        tail_anchor = (cloud_cx, cloud_cy + int(ry) + total_dot_span)
 
     cloud_cx = max(margin + int(rx), min(cloud_cx, canvas_w - margin - int(rx)))
     cloud_cy = max(margin + int(ry), min(cloud_cy, canvas_h - margin - int(ry)))
 
     cloud_points = _generate_cloud_points(cloud_cx, cloud_cy, rx, ry)
-
-    dot_radii_base = [5, 9, 14]
-    dot_radii = [r * sc for r in dot_radii_base]
-    gap = int(6 * sc)
-    total_dot_span = sum(dot_radii) * 2 + gap * len(dot_radii) + 30
-    if head_pos:
-        hx, hy = head_pos
-        min_tail_y = cloud_cy + int(ry) + total_dot_span
-        tail_y = max(hy - 30, min_tail_y)
-        tail_anchor = (hx, tail_y)
-    else:
-        tail_anchor = (cloud_cx, cloud_cy + int(ry) + total_dot_span)
 
     dot_positions = _compute_dot_positions(
         tail_anchor, (cloud_cx, cloud_cy),
@@ -741,7 +986,8 @@ def _compute_bubble_geometry(text: str, canvas_w: int, canvas_h: int,
 
 def _render_bubble_frame(t: float, geom: dict, text: str, font,
                          canvas_w: int, canvas_h: int,
-                         reveal_scale: float = 1.0) -> Image.Image:
+                         reveal_scale: float = 1.0,
+                         fade_out: float = 1.0) -> Image.Image:
     import math
 
     cloud_points = geom["cloud_points"]
@@ -760,6 +1006,9 @@ def _render_bubble_frame(t: float, geom: dict, text: str, font,
 
     img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
+    if fade_out <= 0:
+        return img
+
     bob_y = 0.0
     if t > idle_start:
         bob_y = 7.0 * math.sin(1.5 * (t - idle_start))
@@ -769,7 +1018,7 @@ def _render_bubble_frame(t: float, geom: dict, text: str, font,
             continue
         progress = min((t - pop_start) / max(dur, 0.01), 1.0)
         sc = _ease_out_back(progress)
-        alpha = int(255 * min(progress * 3, 1.0))
+        alpha = int(255 * min(progress * 3, 1.0) * fade_out)
         dot_bob = 0.0
         if t > idle_start:
             dot_bob = bob_y * (0.1 + 0.3 * i)
@@ -779,7 +1028,7 @@ def _render_bubble_frame(t: float, geom: dict, text: str, font,
     if t >= cloud_start:
         progress = min((t - cloud_start) / max(cloud_dur, 0.01), 1.0)
         sc = _ease_out_back(progress)
-        alpha = int(255 * min(progress * 3, 1.0))
+        alpha = int(255 * min(progress * 3, 1.0) * fade_out)
         _draw_cloud(img, cloud_points, sc, alpha, cloud_center, bob_y)
         if alpha > 100:
             _draw_bubble_text(img, text, cloud_center, font, alpha, bob_y)
@@ -819,6 +1068,8 @@ def render_animated_bubble_mov(group, output_path: str,
         output_path,
     ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
+    fade_out_dur = 0.4
+
     for frame_idx in range(total_frames):
         t_local = frame_idx / fps
         t_global = group.group_start + t_local
@@ -831,9 +1082,18 @@ def render_animated_bubble_mov(group, output_path: str,
             if t_global > chunk_end:
                 active_text = chunk_text
 
+        remaining = duration - t_local
+        fo = min(1.0, remaining / fade_out_dur) if remaining < fade_out_dur else 1.0
+
         frame = _render_bubble_frame(t_local, geom, active_text, font,
-                                     canvas_w, canvas_h, reveal_scale)
+                                     canvas_w, canvas_h, reveal_scale,
+                                     fade_out=fo)
         proc.stdin.write(frame.tobytes())
+
+    clear = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    clear_bytes = clear.tobytes()
+    for _ in range(2):
+        proc.stdin.write(clear_bytes)
 
     proc.stdin.close()
     proc.wait()
@@ -885,9 +1145,7 @@ def burn_thought_bubbles(
         inp = f"{i + 1}:v"
         out = f"[v{i}]" if i < len(mov_info) - 1 else "[vout]"
         filters.append(
-            f"[{prev}][{inp}]overlay=0:0:format=auto:"
-            f"enable='between(t,{start:.3f},{end:.3f})'"
-            f"{out}"
+            f"[{prev}][{inp}]overlay=0:0:format=auto:eof_action=pass{out}"
         )
         prev = f"v{i}"
 

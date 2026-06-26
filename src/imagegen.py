@@ -300,7 +300,7 @@ def generate_stable_diffusion(prompt: str, output_path: str, width: int = SD_WID
         "cfg_scale": 1.5,
         "sampler_name": "DPM++ 2M",
         "scheduler": "Karras",
-        "batch_size": 1,
+        "batch_size": 2,
     }
 
     if sd_override:
@@ -320,10 +320,23 @@ def generate_stable_diffusion(prompt: str, output_path: str, width: int = SD_WID
         if not images:
             return False
 
-        img_data = base64.b64decode(images[0])
-        with open(output_path, "wb") as f:
-            f.write(img_data)
-        return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
+        base, ext = os.path.splitext(output_path)
+        if not ext:
+            ext = ".png"
+        all_paths = []
+        for i, img_b64 in enumerate(images):
+            img_data = base64.b64decode(img_b64)
+            p = f"{base}_v{i+1}{ext}" if len(images) > 1 else output_path
+            with open(p, "wb") as f:
+                f.write(img_data)
+            if os.path.getsize(p) > 1000:
+                all_paths.append(p)
+
+        if not all_paths:
+            return False
+
+        shutil.copy2(all_paths[0], output_path)
+        return True
     except Exception as e:
         print(f"      [Stable Diffusion error: {e}]")
         return False
@@ -479,3 +492,20 @@ def generate_scene_image(
         _cache_image(img_cache_key, output_path)
 
     return success
+
+
+def get_variant_paths(output_path: str) -> list:
+    """Return all variant paths (e.g. _v1.png, _v2.png) for a generated image."""
+    base, ext = os.path.splitext(output_path)
+    if not ext:
+        ext = ".png"
+    variants = []
+    for i in range(1, 20):
+        p = f"{base}_v{i}{ext}"
+        if os.path.exists(p) and os.path.getsize(p) > 1000:
+            variants.append(p)
+        else:
+            break
+    if not variants and os.path.exists(output_path):
+        variants = [output_path]
+    return variants

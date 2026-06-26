@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from .config import settings
-from .render import FFMPEG, reframe_vertical, burn_captions, add_film_grain, add_text_hook, burn_thought_bubbles, detect_head_position
+from .render import FFMPEG, reframe_vertical, burn_captions, add_film_grain, add_text_hook, burn_thought_bubbles, burn_footnote, detect_head_position, click_head_position
 from .narration import generate_narration, generate_silence, is_silent_scene, SentenceTiming, POPULAR_VOICES, MOOD_VOICE_SETTINGS
 from .transcribe import transcribe, transcribe_audio, Word
 from .captions import build_ass
-from .imagegen import generate_scene_image, generate_scene_video
+from .imagegen import generate_scene_image, generate_scene_video, get_variant_paths
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 
@@ -164,6 +164,16 @@ def _parse_timeline_script(script: str) -> List[Scene]:
             scenes[-1].duration = scenes[-2].duration
         else:
             scenes[-1].duration = 10.0
+
+    # Ensure every scene has a visual query — fill empty ones from neighbors
+    for i, scene in enumerate(scenes):
+        if not scene.search_query or not scene.search_query.strip():
+            if i > 0 and scenes[i - 1].search_query:
+                scene.search_query = scenes[i - 1].search_query
+            elif i + 1 < len(scenes) and scenes[i + 1].search_query:
+                scene.search_query = scenes[i + 1].search_query
+            else:
+                scene.search_query = "cinematic background"
 
     return scenes
 
@@ -804,6 +814,7 @@ def create_story(
     caption_animation: str = "karaoke",
     hook_text: str = "",
     review_images: bool = False,
+    footnote: str = "",
 ) -> str:
     """Create a short narrated video from a script.
 
@@ -1067,11 +1078,22 @@ def create_story(
             # Copy images to output dir for easy preview
             review_dir = os.path.join(output_dir, "_review")
             os.makedirs(review_dir, exist_ok=True)
+
+            # Collect all variants per scene
+            scene_variants = []
             for i, img_path in enumerate(scene_img_paths):
-                if img_path and os.path.exists(img_path):
-                    ext = os.path.splitext(img_path)[1] or ".png"
-                    preview_path = os.path.join(review_dir, f"scene_{i+1:02d}{ext}")
-                    shutil.copy2(img_path, preview_path)
+                if img_path:
+                    variants = get_variant_paths(img_path)
+                else:
+                    variants = []
+                scene_variants.append(variants)
+                for vi, vp in enumerate(variants):
+                    ext = os.path.splitext(vp)[1] or ".png"
+                    if len(variants) > 1:
+                        preview_path = os.path.join(review_dir, f"scene_{i+1:02d}_v{vi+1}{ext}")
+                    else:
+                        preview_path = os.path.join(review_dir, f"scene_{i+1:02d}{ext}")
+                    shutil.copy2(vp, preview_path)
 
             # Open preview folder
             print(f"\n   Preview images saved to: {review_dir}")
@@ -1086,50 +1108,191 @@ def create_story(
                 print("=" * 60)
                 for i, scene in enumerate(scenes):
                     has_img = scene_img_paths[i] is not None
-                    text_preview = scene.text[:55]
+                    text_preview = scene.text[:40]
                     status = "OK" if has_img else "no img"
-                    print(f"  [{i+1}] [{status:6s}] \"{text_preview}\"")
+                    if scene.head_pos:
+                        head_label = f"{scene.head_pos[0]},{scene.head_pos[1]}"
+                    else:
+                        head_label = "none"
+                    nv = len(scene_variants[i]) if i < len(scene_variants) else 0
+                    var_label = f"{nv} variants" if nv > 1 else ""
+                    print(f"  [{i+1}] [{status:6s}] [head: {head_label:10s}] {var_label:12s} \"{text_preview}\"")
                 print("=" * 60)
                 print("Commands:")
-                print("  2,4     — regenerate scenes 2 and 4")
-                print("  open 3  — open scene 3 image in Preview")
-                print("  open    — open review folder")
-                print("  done    — continue to render")
-                choice = input("> ").strip().lower()
+                print("  2,4              — regenerate scenes 2 and 4")
+                print("  open 3           — open scene 3 image in Preview")
+                print("  pick 3           — open all variants, click to pick")
+                print("  pick 3 2         — use variant 2 for scene 3")
+                print("  head 3           — click to tag head position")
+                print("  head 3 540 300   — set head position (pixels)")
+                print("  head 3 50% 15%   — set head position (percentage)")
+                print("  head 3 auto      — re-run auto detection")
+                print("  head 3 none      — clear head position")
+                print("  done             — continue to render")
+                choice = input("> ").strip()
+                choice_lower = choice.lower()
 
-                if choice in ("done", "d", "ok", "continue", "c"):
+                if choice_lower in ("done", "d", "ok", "continue", "c"):
                     break
 
-                if choice == "open" or choice == "o":
+                if choice_lower == "open" or choice_lower == "o":
                     try:
                         subprocess.run(["open", review_dir], capture_output=True)
                     except Exception:
                         pass
                     continue
 
-                if choice.startswith("open ") or choice.startswith("o "):
+                if choice_lower.startswith("open ") or choice_lower.startswith("o "):
                     try:
-                        idx = int(choice.split()[-1]) - 1
+                        idx = int(choice_lower.split()[-1]) - 1
                         if 0 <= idx < len(scene_img_paths) and scene_img_paths[idx]:
-                            ext = os.path.splitext(scene_img_paths[idx])[1] or ".png"
-                            preview = os.path.join(review_dir, f"scene_{idx+1:02d}{ext}")
-                            if os.path.exists(preview):
-                                subprocess.run(["open", preview], capture_output=True)
+                            variants = scene_variants[idx] if idx < len(scene_variants) else []
+                            if len(variants) > 1:
+                                for vi, vp in enumerate(variants):
+                                    ext = os.path.splitext(vp)[1] or ".png"
+                                    pv = os.path.join(review_dir, f"scene_{idx+1:02d}_v{vi+1}{ext}")
+                                    if os.path.exists(pv):
+                                        subprocess.run(["open", pv], capture_output=True)
                             else:
-                                print(f"  No image for scene {idx+1}")
+                                ext = os.path.splitext(scene_img_paths[idx])[1] or ".png"
+                                preview = os.path.join(review_dir, f"scene_{idx+1:02d}{ext}")
+                                if os.path.exists(preview):
+                                    subprocess.run(["open", preview], capture_output=True)
+                                else:
+                                    print(f"  No image for scene {idx+1}")
                         else:
                             print(f"  No image for scene {idx+1}")
                     except (ValueError, IndexError):
                         print("  Usage: open 3")
                     continue
 
-                if not choice:
+                if choice_lower.startswith("pick ") or choice_lower.startswith("p "):
+                    parts = choice.split()
+                    if len(parts) < 2:
+                        print("  Usage: pick 3 [variant#]")
+                        continue
+                    try:
+                        idx = int(parts[1]) - 1
+                    except ValueError:
+                        print("  Usage: pick 3 [variant#]")
+                        continue
+                    if idx < 0 or idx >= len(scenes):
+                        print(f"  Scene {idx+1} out of range")
+                        continue
+                    variants = scene_variants[idx] if idx < len(scene_variants) else []
+                    if not variants:
+                        print(f"  No variants for scene {idx+1}")
+                        continue
+
+                    if len(parts) == 2:
+                        # Open all variants for viewing
+                        for vi, vp in enumerate(variants):
+                            ext = os.path.splitext(vp)[1] or ".png"
+                            pv = os.path.join(review_dir, f"scene_{idx+1:02d}_v{vi+1}{ext}")
+                            if os.path.exists(pv):
+                                subprocess.run(["open", pv], capture_output=True)
+                        print(f"  Opened {len(variants)} variants. Type: pick {idx+1} <variant#>")
+                    elif len(parts) == 3:
+                        try:
+                            vi = int(parts[2]) - 1
+                        except ValueError:
+                            print(f"  Usage: pick {idx+1} 2")
+                            continue
+                        if vi < 0 or vi >= len(variants):
+                            print(f"  Variant {vi+1} out of range (1-{len(variants)})")
+                            continue
+                        chosen = variants[vi]
+                        scene_img_paths[idx] = chosen
+                        scene.head_pos = None
+                        # Re-create video from chosen variant
+                        video_path = os.path.join(tmp, f"scene_video_{idx:02d}.mp4")
+                        _image_to_video(chosen, scenes[idx].duration, video_path, animation=animation)
+                        scene_videos[idx] = video_path
+                        if caption_style == "bubble":
+                            scenes[idx].head_pos = detect_head_position(chosen, video_w=settings.vertical_width, video_h=settings.vertical_height)
+                        # Update main preview
+                        ext = os.path.splitext(chosen)[1] or ".png"
+                        preview_path = os.path.join(review_dir, f"scene_{idx+1:02d}{ext}")
+                        shutil.copy2(chosen, preview_path)
+                        print(f"  Scene {idx+1}: using variant {vi+1}")
+                    continue
+
+                if choice_lower.startswith("head ") or choice_lower.startswith("h "):
+                    parts = choice.split()
+                    if len(parts) < 2:
+                        print("  Usage: head 3 [x y | auto | none]")
+                        continue
+                    try:
+                        idx = int(parts[1]) - 1
+                    except ValueError:
+                        print("  Usage: head 3 [x y | auto | none]")
+                        continue
+                    if idx < 0 or idx >= len(scenes):
+                        print(f"  Scene {idx+1} out of range")
+                        continue
+
+                    if len(parts) == 2:
+                        img_path = scene_img_paths[idx]
+                        if img_path and os.path.exists(img_path):
+                            print(f"  Opening scene {idx+1} — click on the head position...")
+                            pos = click_head_position(
+                                img_path,
+                                video_w=settings.vertical_width,
+                                video_h=settings.vertical_height,
+                                current_head_pos=scenes[idx].head_pos,
+                            )
+                            if pos:
+                                scenes[idx].head_pos = pos
+                                print(f"  Scene {idx+1}: head set to ({pos[0]}, {pos[1]})")
+                            else:
+                                print(f"  Scene {idx+1}: cancelled (window closed)")
+                        else:
+                            print(f"  No image for scene {idx+1}")
+                    elif len(parts) == 3 and parts[2].lower() == "auto":
+                        img_path = scene_img_paths[idx]
+                        if img_path and os.path.exists(img_path):
+                            scenes[idx].head_pos = detect_head_position(
+                                img_path,
+                                video_w=settings.vertical_width,
+                                video_h=settings.vertical_height,
+                            )
+                            pos = scenes[idx].head_pos
+                            print(f"  Scene {idx+1}: head auto-detected at {pos}" if pos else f"  Scene {idx+1}: no head detected")
+                        else:
+                            print(f"  No image for scene {idx+1}")
+                    elif len(parts) == 3 and parts[2].lower() == "none":
+                        scenes[idx].head_pos = None
+                        print(f"  Scene {idx+1}: head position cleared")
+                    elif len(parts) == 4:
+                        try:
+                            vw = settings.vertical_width
+                            vh = settings.vertical_height
+                            xval, yval = parts[2], parts[3]
+                            if xval.endswith("%"):
+                                hx = int(float(xval.rstrip("%")) / 100 * vw)
+                            else:
+                                hx = int(xval)
+                            if yval.endswith("%"):
+                                hy = int(float(yval.rstrip("%")) / 100 * vh)
+                            else:
+                                hy = int(yval)
+                            hx = max(0, min(hx, vw))
+                            hy = max(0, min(hy, vh))
+                            scenes[idx].head_pos = (hx, hy)
+                            print(f"  Scene {idx+1}: head set to ({hx}, {hy})")
+                        except (ValueError, IndexError):
+                            print("  Usage: head 3 540 300  or  head 3 50% 15%")
+                    else:
+                        print("  Usage: head 3 [x y | auto | none]")
+                    continue
+
+                if not choice_lower:
                     continue
 
                 try:
-                    indices = [int(x.strip()) - 1 for x in choice.split(",")]
+                    indices = [int(x.strip()) - 1 for x in choice_lower.split(",")]
                 except ValueError:
-                    print("Invalid input. Type scene numbers (e.g. '2,4'), 'open 3', or 'done'.")
+                    print("Invalid input. Type scene numbers (e.g. '2,4'), 'head 3 540 300', or 'done'.")
                     continue
 
                 for idx in indices:
@@ -1137,6 +1300,7 @@ def create_story(
                         print(f"  Scene {idx+1} out of range, skipping")
                         continue
                     scene = scenes[idx]
+                    scene.head_pos = None
                     styled_query = scene.search_query + _style_suffix
                     print(f"\n   Regenerating scene {idx+1}...")
                     visual_path = os.path.join(tmp, f"visual_{idx:02d}_regen")
@@ -1155,11 +1319,23 @@ def create_story(
                     scene_img_paths[idx] = img_path
                     scene_videos[idx] = video_path
 
-                    # Update preview
-                    if img_path and os.path.exists(img_path):
-                        ext = os.path.splitext(img_path)[1] or ".png"
-                        preview_path = os.path.join(review_dir, f"scene_{idx+1:02d}{ext}")
-                        shutil.copy2(img_path, preview_path)
+                    # Update variants and preview
+                    if img_path:
+                        variants = get_variant_paths(img_path)
+                    else:
+                        variants = []
+                    scene_variants[idx] = variants
+                    # Remove old preview files for this scene
+                    for f in os.listdir(review_dir):
+                        if f.startswith(f"scene_{idx+1:02d}"):
+                            os.unlink(os.path.join(review_dir, f))
+                    for vi, vp in enumerate(variants):
+                        ext = os.path.splitext(vp)[1] or ".png"
+                        if len(variants) > 1:
+                            pv = os.path.join(review_dir, f"scene_{idx+1:02d}_v{vi+1}{ext}")
+                        else:
+                            pv = os.path.join(review_dir, f"scene_{idx+1:02d}{ext}")
+                        shutil.copy2(vp, pv)
 
                 print(f"\n   Regeneration complete.")
 
@@ -1208,11 +1384,20 @@ def create_story(
                     from .captions import WORDS_PER_CHUNK
 
                     head_positions = [s.head_pos for s in scenes]
+                    xfade_dur = 0.8 if len(scenes) > 1 else 0.0
                     cumulative = 0.0
                     scene_times = []
-                    for s in scenes:
-                        scene_times.append((cumulative, cumulative + s.duration))
+                    for i, s in enumerate(scenes):
+                        s_start = cumulative
+                        s_end = cumulative + s.duration
+                        if i > 0:
+                            s_start += xfade_dur / 2
+                        if i < len(scenes) - 1:
+                            s_end -= xfade_dur / 2
+                        scene_times.append((s_start, s_end))
                         cumulative += s.duration
+                        if i < len(scenes) - 1:
+                            cumulative -= xfade_dur
 
                     bubble_groups = []
                     for scene_idx, (s_start, s_end) in enumerate(scene_times):
@@ -1268,14 +1453,12 @@ def create_story(
                                         sub_chunks[-1] = (last_text, last_start, chunk_end)
 
                         if sub_chunks:
-                            group_start = sub_chunks[0][1]
-                            group_end = sub_chunks[-1][2]
                             bubble_groups.append(BubbleGroup(
                                 group_idx=scene_idx,
                                 side=side,
                                 chunks=sub_chunks,
-                                group_start=group_start,
-                                group_end=group_end,
+                                group_start=s_start,
+                                group_end=s_end,
                                 head_pos=head,
                             ))
 
@@ -1307,6 +1490,16 @@ def create_story(
         hooked_path = final_path + ".hooked.mp4"
         add_text_hook(final_path, resolved_hook, hooked_path, clip_duration=hook_duration, caption_font=caption_font)
         os.replace(hooked_path, final_path)
+
+    # Burn footnote on outro
+    if footnote:
+        print(f"-> Adding footnote to outro...")
+        total_dur = _get_audio_duration(final_path)
+        outro_dur = scenes[-1].duration if scenes else 5.0
+        fn_path = final_path + ".footnote.mp4"
+        burn_footnote(final_path, fn_path, footnote, video_duration=total_dur,
+                      outro_duration=outro_dur, caption_font=caption_font)
+        os.replace(fn_path, final_path)
 
     # Apply film grain effect
     if film_grain:

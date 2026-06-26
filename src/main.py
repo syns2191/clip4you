@@ -609,6 +609,8 @@ def main():
                               help="Caption animation: karaoke (highlight active word), word (words appear one by one), typing (character by character)")
     story_parser.add_argument("--hook-text", type=str, default="",
                               help="Add hook/summary text overlay on intro. Use 'auto' for AI-generated, or provide your own text (max 6 words)")
+    story_parser.add_argument("--footnote", type=str, default="",
+                              help="Footnote text shown on the outro scene (e.g. 'Follow for more\\nDaily wisdom'). Use \\n for line breaks")
     story_parser.add_argument("--review-images", action="store_true",
                               help="Review generated images and regenerate specific scenes before rendering")
     story_parser.add_argument("--upload", action="store_true",
@@ -796,6 +798,7 @@ def main():
             caption_animation=getattr(args, 'caption_animation', 'karaoke'),
             hook_text=getattr(args, 'hook_text', ''),
             review_images=getattr(args, 'review_images', False),
+            footnote=getattr(args, 'footnote', '').replace('\\n', '\n'),
         )
 
         if args.upload and final_path:
