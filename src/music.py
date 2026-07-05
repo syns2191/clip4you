@@ -219,6 +219,74 @@ def _ai_pick_local(tracks: List[str], category: str, title: str) -> Optional[str
     return None
 
 
+@dataclass
+class MusicOptions:
+    local: List[str]           # filenames in music/ folder
+    youtube: List[MusicOption]  # YouTube search results
+    ai_local: Optional[str]    # AI-suggested local filename (or None)
+    genre: str                 # query used
+
+
+def get_music_options(
+    category: str,
+    title: str,
+    genre: Optional[str] = None,
+) -> MusicOptions:
+    """Fetch local tracks + YouTube results without any blocking I/O."""
+    local_tracks = _get_local_tracks()
+    ai_choice = None
+    if local_tracks and not genre:
+        ai_choice = _ai_pick_local(local_tracks, category, title)
+
+    if genre:
+        query = f"{genre} no copyright music free to use"
+    else:
+        query = _suggest_search_query(category, title)
+
+    yt_options = _search_youtube(query, safe_only=True)
+    if not yt_options:
+        yt_options = _search_youtube(query, safe_only=False)
+
+    return MusicOptions(
+        local=local_tracks,
+        youtube=yt_options,
+        ai_local=ai_choice,
+        genre=genre or query,
+    )
+
+
+def resolve_music_choice(
+    choice_key: str,
+    options: MusicOptions,
+    output_dir: str,
+) -> Optional[str]:
+    """Resolve a user selection key to a local file path, downloading if needed.
+
+    choice_key values:
+      "skip"          — no music
+      "local:<name>"  — a filename from options.local
+      "yt:<idx>"      — 0-based index into options.youtube (will download)
+    """
+    if not choice_key or choice_key == "skip":
+        return None
+
+    if choice_key.startswith("local:"):
+        name = choice_key[len("local:"):]
+        return os.path.join(MUSIC_DIR, name)
+
+    if choice_key.startswith("yt:"):
+        try:
+            idx = int(choice_key[3:])
+            selected = options.youtube[idx]
+            safe_name = "".join(c if c.isalnum() or c in "-_ " else "" for c in selected.title)[:50]
+            path = _download_audio(selected.url, MUSIC_DIR, f"{safe_name}.mp3")
+            return path
+        except (ValueError, IndexError):
+            return None
+
+    return None
+
+
 def suggest_and_pick_music(
     category: str,
     title: str,

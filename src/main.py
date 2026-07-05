@@ -678,9 +678,14 @@ def main():
     scriptgen_parser.add_argument("--run", action="store_true",
                                   help="Generate script AND immediately render it as a story video")
 
+    # GUI launcher
+    gui_parser = subparsers.add_parser("gui", help="Launch the web GUI")
+    gui_parser.add_argument("--share", action="store_true", help="Create a public Gradio link")
+    gui_parser.add_argument("--port", type=int, default=7861, help="Server port (default: 7861)")
+
     # Check if first arg is a subcommand
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] in ("clip", "story", "upload", "enhance", "scriptgen"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("clip", "story", "upload", "enhance", "scriptgen", "gui"):
         args = parser.parse_args()
     else:
         # No subcommand — use backward-compatible clip mode
@@ -721,6 +726,11 @@ def main():
                                    default="private")
         args = parser_compat.parse_args()
         args.command = "clip"
+
+    if args.command == "gui":
+        from .gui import launch_app
+        launch_app(share=args.share, port=args.port)
+        return
 
     if args.command == "scriptgen":
         from .scriptgen import generate_script

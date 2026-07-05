@@ -155,10 +155,11 @@ CHARACTER_PRESETS = {
         "name": "Silhouette Figure",
         "visual": "(silhouette figure:1.4), dark outline, featureless, mysterious",
     },
-    "stickman": {
-        "name": "Stick Figure",
-        "visual": "(stick figure:1.4), simple line drawing, basic human shape",
-    },
+"stickman": {
+    "name": "Expressive Webcomic Character",
+    "visual": "(fleshed-out minimalist character:1.4), simple rounded body with visible limbs and hands (not thin stick lines), wearing hoodie and sneakers, {action} pose, {emotion} facial expression with clear eyebrows eyes and mouth, interacting with {object} rendered in matching line-art style and correct scale, highly expressive webcomic style, thick bold black outlines, flat black and white line art, no shading or greyscale fills, dynamic body language and exaggerated gesture, clear joints at shoulders elbows hips and knees, consistent proportions head roughly 1:5 of total body height, clean confident linework, single-panel webcomic illustration",
+    "negative": "photograph, realistic anatomy, 3d render, full color, gradient shading, painting, messy scribble, thin uniform stick lines, blurry, low quality, distorted proportions, extra limbs, floating disconnected object, mismatched scale, stiff pose, blank expressionless face, cropped limbs",
+},
     "businessman": {
         "name": "Business Person",
         "visual": "(man in suit:1.4), professional attire, tie, briefcase, urban",
@@ -190,6 +191,11 @@ CHARACTER_PRESETS = {
 }
 
 BACKGROUND_THEMES = {
+    "auto": {
+            "name": "Auto (Script-Based)",
+            "visual": "contextually appropriate background, dynamic environment matching the script narrative, scenery adapting to the main subject and action",
+            "lighting": "dynamic lighting matching the scene's mood and context",
+    },
     "nature": {
         "name": "Nature & Wilderness",
         "visual": "open natural landscape, rolling hills, trees, grass, vast sky",
@@ -286,7 +292,7 @@ ART_STYLE_TEMPLATES = {
     "oil": "classical oil painting, rich colors, visible brushstrokes, canvas texture",
     "minimal": "minimalist illustration, clean lines, simple shapes, negative space",
     "charcoal": "charcoal drawing, dramatic shadows, smudged edges, high contrast",
-    "stickfigure": "simple stick figure drawing, black lines on white background, whiteboard sketch",
+    "stickfigure": "expressive fleshed-out webcomic character, thick bold black outlines on white background, flat black and white line art, dynamic pose",
     "realistic": "photorealistic, ultra detailed, professional photography, sharp focus",
 }
 

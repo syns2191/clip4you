@@ -17,7 +17,7 @@ SD_API_URL = os.getenv("SD_API_URL", "http://127.0.0.1:7860")
 SD_MODEL = os.getenv("SD_MODEL", "")
 SD_WIDTH = int(os.getenv("SD_WIDTH", "512"))
 SD_HEIGHT = int(os.getenv("SD_HEIGHT", "768"))
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1-mini")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 VEO_MODEL = os.getenv("VEO_MODEL", "veo-3.1-lite-generate-preview")
 
@@ -90,9 +90,14 @@ ART_STYLES = {
         "negative": "cartoon, anime, painting, drawing, sketch, abstract",
     },
     "stickfigure": {
+        "name": "Expressive Character Study",
+        "prompt": "character study sheet, fleshed-out minimalist character, wearing a hoodie and sneakers, multiple highly expressive faces, grid of exaggerated facial expressions (happy, sad, angry, surprised), dynamic body language, clean bold black outlines on white background, modern webcomic style illustration, flat black and white line art, stylized human shape, clear and distinct strokes",
+        "negative": "neutral expression, blank face, emotionless, thin lines, single continuous line drawing, stick thin, crude hand-drawn doodle, realistic anatomy, detailed, photograph, complex, shading, 3d render, color, painting, messy, scratchy"
+    },
+    "stickfigure": {
         "name": "Stick Figure",
-        "prompt": "simple stick figure drawing, black lines on white background, crude hand-drawn doodle, minimalist stick people, childlike simple drawing, whiteboard sketch, basic shapes, stick man illustration, simple and funny",
-        "negative": "realistic, detailed, photograph, complex, shading, 3d render, color, painting",
+        "prompt": "expressive stick figure character, {action} pose, {emotion} facial expression, interacting with {object}, bold confident black ink lines on clean white background, hand-drawn marker style, varied line weight thicker at joints and torso thinner at limb ends, circular head with clear eyes eyebrows and mouth showing emotion, dynamic full-body gesture and motion lines, well-proportioned limbs roughly 1:1 head-to-body ratio typical of gesture-doodle stick figures, clear joint dots at shoulders elbows hips and knees, object rendered in same simple line style and correct scale relative to figure, whiteboard illustration style, clean line work, storytelling illustration, single continuous scene",
+        "negative": "realistic, detailed anatomy, photograph, complex shading, 3d render, full color, painting, messy scribble, single continuous one-line drawing, blurry, low quality, distorted proportions, extra limbs, floating disconnected object, mismatched scale, stiff T-pose, blank expressionless face",
     },
     "sketch": {
         "name": "Pencil Sketch Drawing",
@@ -237,7 +242,7 @@ def generate_openai(prompt: str, output_path: str, size: str = "1024x1536") -> b
             model=OPENAI_IMAGE_MODEL,
             prompt=prompt,
             size=size,
-            quality="auto",
+            quality="low",
             n=1,
         )
 
@@ -292,7 +297,7 @@ def generate_stable_diffusion(prompt: str, output_path: str, width: int = SD_WID
         negative_prompt = "text, watermark, logo, blurry, low quality, deformed, ugly, nsfw"
 
     payload = {
-        "prompt": prompt,
+        "prompt": f"{prompt}<lora:ip-adapter-faceid-plusv2_sd15_lora:1>",
         "negative_prompt": negative_prompt,
         "width": width,
         "height": height,
