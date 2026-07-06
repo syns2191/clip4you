@@ -20,43 +20,10 @@ DEFAULT_VOICE = "en-US-ChristopherNeural"
 
 # ElevenLabs voice IDs — pass as "el:<voice_id>" or use shortcuts below
 ELEVENLABS_VOICES = {
-    "el-rachel":    "21m00Tcm4TlvDq8ikWAM",   # warm female
-    "el-adam":      "pNInz6obpgDQGcFmaJgB",   # deep male, narration
-    "el-clyde":     "2EiwWnXFnvU5JabPnv8n",   # confident male
-    "el-domi":      "AZnzlk1XvdvUeBnXmlld",   # strong female
-    "el-dave":      "CYw3kZ02Hs0563khs1Fj",   # british male
-    "el-fin":       "D38z5RcWu1voky8WS1ja",   # soft male
-    "el-bella":     "EXAVITQu4vr4xnSDxMaL",   # soft female
-    "el-callum":    "N2lVS1w4EtoT3dr4eOWO",   # male, intense
-    "el-charlie":   "IKne3meq5aSn9XLyUdCD",   # casual male, au
-    "el-charlotte": "XB0fDUnXU5powFXDhCwa",   # female, seductive
-    "el-daniel":    "onwK4e9ZLuTAKqWW03F9",   # british male, authoritative
-    "el-ethan":     "g5CIjZEefAph4nQFvHAz",   # soft male
-    "el-freya":     "jsCqWAovK2LkecY7zXl4",   # female, american
-    "el-gigi":      "jBpfuIE2acCO8z3wKNLl",   # female, childlike
-    "el-giovanni":  "zcAOhNBS3c14rBihAFp1",   # male, italian accent
-    "el-glinda":    "z9fAnlkpzviPz146aGWa",   # female, theatrical
-    "el-grace":     "oWAxZDx7w5VEj9dCyTzz",   # southern female
-    "el-harry":     "SOYHLrjzK2X1ezoPC6cr",   # male, anxious
-    "el-james":     "ZQe5CZNOzWyzPSCn5a3c",   # british male, calm
-    "el-jeremy":    "bVMeCyTHy58xNoL34h3p",   # male, american
-    "el-jessie":    "t0jbNlBVZ17f02VDIeMI",   # male, old
-    "el-joseph":    "Zlb1dXrM653N07WRdFW3",   # british male
-    "el-josh":      "TxGEqnHWrfWFTfGW9XjX",   # deep male
-    "el-liam":      "TX3LPaxmHKxFdv7VOQHJ",   # male, neutral
-    "el-lily":      "pFZP5JQG7iQjIQuC4Bku",   # british female
-    "el-matilda":   "XrExE9yKIg1WjnnlVkGX",   # female, warm
-    "el-michael":   "flq6f7yk4E4fJM5XTYuZ",   # old male
-    "el-mimi":      "zrHiDhphv9ZnVXBqCLjz",   # female, childlike
-    "el-nicole":    "piTKgcLEGmPE4e6mEKli",   # female, whisper
-    "el-patrick":   "ODq5zmih8GrVes37Dizd",   # male, shouting
-    "el-paul":      "5Q0t7uMcjvnagumLfvZi",   # male, news
-    "el-sam":       "yoZ06aMxZJJ28mfd3POQ",   # male, raspy
-    "el-sarah":     "EXAVITQu4vr4xnSDxMaL",   # female, soft
-    "el-serena":    "pMsXgVXv3BLzUgSXRplE",   # female, pleasant
     "el-thomas":    "GBv7mTt0atIp3Br8iCZE",   # male, calm
     "el-william":   "bIHbv24MWmeRgasZH58o",   # male, old british
     "syns": "NbYHfMmZyvMxflOseaw2",
+    "syns-warmer": "KZrGqGwAGzDxoN8xtKVl"
 }
 
 POPULAR_VOICES = {
@@ -213,7 +180,7 @@ async def _generate_tts(text: str, output_path: str, voice: str, rate: str = "-1
     return timings
 
 
-def _generate_elevenlabs_tts(text: str, output_path: str, voice_id: str, stability: float = 0.5, similarity_boost: float = 0.75) -> list:
+def _generate_elevenlabs_tts(text: str, output_path: str, voice_id: str, stability: float = 0.6, similarity_boost: float = 0.75) -> list:
     """Generate TTS using ElevenLabs API. Returns empty timings list (ElevenLabs doesn't provide word timings)."""
     import httpx
 
@@ -233,6 +200,8 @@ def _generate_elevenlabs_tts(text: str, output_path: str, voice_id: str, stabili
         "voice_settings": {
             "stability": stability,
             "similarity_boost": similarity_boost,
+            "speed": 0.97,
+            "style_aggregation": "25%",
         },
     }
 

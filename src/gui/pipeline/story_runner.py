@@ -57,8 +57,12 @@ class StorySession:
     output_filename: str = ""  # empty = auto-generated from script
     use_tts_cache: bool = True
     orientation: str = "portrait"  # portrait | landscape | square
+    ending_gap: float = 2.0        # extra silence (seconds) appended after the last scene
     gallery_folder: str = ""          # non-empty only when visuals == "gallery"
     gallery_images: List[str] = field(default_factory=list)  # abs paths found in gallery_folder
+    character_name: str = ""  # named character for face/visual consistency
+
+    cancelled: bool = False
 
     work_dir: str = ""
     scenes: List[Scene] = field(default_factory=list)
@@ -168,6 +172,8 @@ def execute_phase1(session: StorySession):
         print(f"   Voice: {voice_name} | Rate: {tts_rate}{cache_label}")
 
         for i, scene in enumerate(session.scenes):
+            if session.cancelled:
+                raise InterruptedError("Pipeline cancelled by user")
             audio_path = os.path.join(session.work_dir, f"scene_{i:02d}.mp3")
 
             if is_silent_scene(scene.text):
@@ -214,6 +220,10 @@ def execute_phase1(session: StorySession):
             cache_tag = " [cache]" if from_cache else ""
             print(f"   Scene {i+1}: {scene.duration:.1f}s (tts: {tts_duration:.1f}s){cache_tag} - \"{scene.text[:50]}\"")
 
+    if session.scenes and session.ending_gap > 0:
+        session.scenes[-1].duration += session.ending_gap
+        print(f"   Ending gap: +{session.ending_gap:.1f}s added to last scene")
+
     total_duration = sum(s.duration for s in session.scenes)
     print(f"   Total duration: {total_duration:.1f}s")
 
@@ -244,6 +254,8 @@ def execute_phase2(session: StorySession):
     session.scene_variants = []
 
     for i, scene in enumerate(session.scenes):
+        if session.cancelled:
+            raise InterruptedError("Pipeline cancelled by user")
         styled_query = scene.search_query + session._style_suffix
         print(f"   Scene {i+1}/{len(session.scenes)}: \"{styled_query[:60]}\" ({scene.duration:.1f}s)")
 
@@ -308,7 +320,10 @@ def _generate_one_visual(session, i, scene, visual_path, video_path, styled_quer
             ai_img_path = visual_path + "_ai.png"
             if generate_scene_image(scene.text, scene.search_query, ai_img_path,
                                     provider=session.visuals, art_style=session.art_style,
-                                    category=session.image_category):
+                                    category=session.image_category,
+                                    mood=getattr(scene, "mood", ""),
+                                    orientation=session.orientation,
+                                    character_name=session.character_name):
                 if session.caption_style == "bubble":
                     scene.head_pos = detect_head_position(
                         ai_img_path, video_w=settings.vertical_width, video_h=settings.vertical_height,
@@ -377,7 +392,7 @@ def regenerate_scene(session: StorySession, idx: int):
 
     print(f"   Regenerating scene {idx+1}...")
 
-    cache_k = _cache_key(f"img:{session.visuals}:{session.art_style}:{session.image_category}:{scene.text}:{scene.search_query}")
+    cache_k = _cache_key(f"img:{session.visuals}:{session.art_style}:{session.image_category}:{getattr(scene, 'mood', '')}:{session.orientation}:{scene.text}:{scene.search_query}")
     for ext in (".png", ".jpg", ".webp"):
         cached = os.path.join(CACHE_IMG_DIR, cache_k + ext)
         if os.path.exists(cached):

@@ -27,9 +27,21 @@ def create_app() -> gr.Blocks:
                 from .tabs.enhance_tab import create_enhance_tab
                 create_enhance_tab()
 
+            with gr.Tab("Characters", id="characters"):
+                from .tabs.characters_tab import create_characters_tab
+                create_characters_tab()
+
             with gr.Tab("Upload", id="upload"):
                 from .tabs.upload_tab import create_upload_tab
                 create_upload_tab()
+
+            with gr.Tab("Integrations", id="integrations"):
+                from .tabs.integrations_tab import create_integrations_tab
+                create_integrations_tab()
+
+            with gr.Tab("Settings", id="settings"):
+                from .tabs.settings_tab import create_settings_tab
+                create_settings_tab()
 
     return app
 

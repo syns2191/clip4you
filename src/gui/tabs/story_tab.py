@@ -24,6 +24,7 @@ from ..components.head_tagger import (
     auto_detect_head, set_manual_head, clear_head, on_click_set_head,
 )
 from ...music import get_music_options, resolve_music_choice, MusicOptions
+from ...character import get_library as get_char_library
 
 
 def create_story_tab():
@@ -56,6 +57,13 @@ def create_story_tab():
             with gr.Row():
                 visuals = gr.Dropdown(label="Visual Source", choices=VISUAL_SOURCE_CHOICES, value="sd")
                 art_style = gr.Dropdown(label="Art Style", choices=ART_STYLE_CHOICES, value="")
+            with gr.Row():
+                character_name = gr.Dropdown(
+                    label="Character (optional — for face/visual consistency)",
+                    choices=["(none)"] + get_char_library().names(),
+                    value="(none)",
+                )
+                char_refresh_btn = gr.Button("↻", size="sm", min_width=40, scale=0)
             gallery_folder_input = gr.Textbox(
                 label="Gallery Folder Path",
                 value=CACHE_IMG_DIR,
@@ -80,6 +88,9 @@ def create_story_tab():
             footnote = gr.Textbox(label="Footnote (outro)", lines=2, placeholder="Title\\nSubtitle")
             output_filename = gr.Textbox(label="Output Filename", placeholder="Leave blank for auto (slug + timestamp)", value="")
 
+            ending_gap = gr.Slider(label="Ending Gap (s)", minimum=0.0, maximum=8.0, step=0.5, value=2.0,
+                                   info="Silent pause added after the last scene so the final words aren't cut off")
+
             with gr.Row():
                 music_file = gr.File(label="Music", file_types=[".mp3", ".wav", ".m4a"])
                 music_volume = gr.Slider(label="Music Vol", minimum=0.0, maximum=1.0, step=0.05, value=0.3)
@@ -90,6 +101,7 @@ def create_story_tab():
                 gr.Markdown("<small>Uncheck to regenerate all voices from scratch</small>")
 
             start_btn = gr.Button("Start Story Pipeline", variant="primary", size="lg")
+            cancel_btn = gr.Button("Cancel", variant="stop", size="lg", visible=False)
 
         # === RIGHT: Output ===
         with gr.Column(scale=3):
@@ -279,7 +291,7 @@ def create_story_tab():
     wizard_outputs = [scene_progress, scene_info, gallery, head_x, head_y, head_status, head_preview]
 
     # All outputs for combined phase1+2 + wizard refresh
-    all_phase_outputs = [log_box, wizard_box, output_box, session_state, wizard_idx] + wizard_outputs
+    all_phase_outputs = [log_box, wizard_box, output_box, session_state, wizard_idx, start_btn, cancel_btn] + wizard_outputs
 
     # === File upload handler ===
     def load_script_file(file):
@@ -291,18 +303,22 @@ def create_story_tab():
     script_file.change(load_script_file, inputs=[script_file], outputs=[script_text])
 
     # === Phase 1 + 2 runner (generator for streaming logs) ===
+    _active_session: list = [None]  # mutable reference for cancel
+
     def run_phases_1_2(
         script, provider_val, voice_val, el_voice_val, rate_val,
         orientation_val, visuals_val, art_val, cat_val,
         anim_val, grain_val, cap_style, cap_font, cap_anim,
-        hook_val, footnote_val, out_filename, music_f, music_vol, auto_mus,
-        tts_cache_val, gallery_folder_val,
+        hook_val, footnote_val, out_filename, ending_gap_val, music_f, music_vol, auto_mus,
+        tts_cache_val, gallery_folder_val, char_name_val,
     ):
         # Empty wizard outputs placeholder (7 values)
         empty_wiz = ("...", "...", [], 0, 0, "", "")
+        btn_running = (gr.update(interactive=False), gr.update(visible=True))
+        btn_idle    = (gr.update(interactive=True),  gr.update(visible=False))
 
         if not script.strip():
-            yield ("Please enter a script.", gr.update(), gr.update(), None, 0) + empty_wiz
+            yield ("Please enter a script.", gr.update(), gr.update(), None, 0) + btn_idle + empty_wiz
             return
 
         if visuals_val == "gallery" and not (gallery_folder_val or "").strip():
@@ -317,6 +333,7 @@ def create_story_tab():
         else:
             effective_voice = voice_val or "warm"
 
+        resolved_char = char_name_val if char_name_val and char_name_val != "(none)" else ""
         session = StorySession(
             script=script, output_dir=output_dir,
             voice=effective_voice, voice_rate=rate_str,
@@ -330,8 +347,11 @@ def create_story_tab():
             output_filename=out_filename or "",
             use_tts_cache=bool(tts_cache_val),
             orientation=orientation_val or "portrait",
+            ending_gap=float(ending_gap_val or 2.0),
             gallery_folder=gallery_folder_val or "",
+            character_name=resolved_char,
         )
+        _active_session[0] = session
 
         capture = ProgressCapture()
         error = [None]
@@ -350,19 +370,44 @@ def create_story_tab():
         thread = threading.Thread(target=_run)
         thread.start()
 
+        # Show cancel button, disable start while running
+        yield (capture.get_log(), gr.update(), gr.update(), session, 0) + btn_running + empty_wiz
+
         while thread.is_alive():
             time.sleep(0.4)
-            yield (capture.get_log(), gr.update(), gr.update(), session, 0) + empty_wiz
+            yield (capture.get_log(), gr.update(), gr.update(), session, 0) + btn_running + empty_wiz
         thread.join()
+        _active_session[0] = None
 
         log = capture.get_log()
+        if session.cancelled:
+            yield (log + "\n\nCancelled.", gr.update(visible=False), gr.update(visible=False), None, 0) + btn_idle + empty_wiz
+            return
         if error[0]:
-            yield (log + f"\n\nERROR: {error[0]}", gr.update(visible=False), gr.update(visible=False), session, 0) + empty_wiz
+            yield (log + f"\n\nERROR: {error[0]}", gr.update(visible=False), gr.update(visible=False), session, 0) + btn_idle + empty_wiz
             return
 
         # Success — show wizard and populate it with first scene
         wiz_vals = get_wizard_state(session, 0)
-        yield (log + "\n\n-> Ready for review. Check scenes below.", gr.update(visible=True), gr.update(visible=False), session, 0) + wiz_vals
+        yield (log + "\n\n-> Ready for review. Check scenes below.", gr.update(visible=True), gr.update(visible=False), session, 0) + btn_idle + wiz_vals
+
+    def refresh_characters():
+        names = get_char_library().names()
+        return gr.update(choices=["(none)"] + names)
+
+    char_refresh_btn.click(refresh_characters, inputs=[], outputs=[character_name])
+
+    def cancel_pipeline():
+        s = _active_session[0]
+        if s is not None:
+            s.cancelled = True
+        return gr.update(visible=False), gr.update(interactive=True)
+
+    cancel_btn.click(
+        cancel_pipeline,
+        inputs=[],
+        outputs=[cancel_btn, start_btn],
+    )
 
     start_btn.click(
         run_phases_1_2,
@@ -370,8 +415,8 @@ def create_story_tab():
             script_text, voice_provider, voice, el_voice, voice_rate,
             orientation, visuals, art_style, image_category, animation, film_grain,
             caption_style, caption_font, caption_animation,
-            hook_text, footnote, output_filename, music_file, music_volume, auto_music,
-            use_tts_cache, gallery_folder_input,
+            hook_text, footnote, output_filename, ending_gap, music_file, music_volume, auto_music,
+            use_tts_cache, gallery_folder_input, character_name,
         ],
         outputs=all_phase_outputs,
     )

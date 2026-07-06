@@ -125,11 +125,11 @@ CATEGORY_GUIDANCE = {
 CHARACTER_PRESETS = {
     "man": {
         "name": "Adult Man",
-        "visual": "(man:1.4), adult male, medium build",
+        "visual": "(man:1.4), male, medium build",
     },
     "woman": {
         "name": "Adult Woman",
-        "visual": "(woman:1.4), adult female, graceful posture",
+        "visual": "(woman:1.4), female, graceful posture",
     },
     "elder": {
         "name": "Wise Elder",

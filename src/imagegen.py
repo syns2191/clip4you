@@ -46,8 +46,8 @@ ART_STYLES = {
     },
     "ghibli": {
         "name": "Studio Ghibli",
-        "prompt": "Pencil Sketch Drawing, (Studio ghibli style, Art by Hayao Miyazaki:1.2), Anime Style, Manga Style, Hand drawn, cinematic, Sharp focus, humorous illustration, big depth of field, Masterpiece, concept art, trending on artstation, Vivid colors, Simplified style, trending on ArtStation, trending on CGSociety, Intricate, Vibrant colors, Soft Shading, Simplistic Features, Sharp Angles, Playful, black and white drawing, graphite drawing",
-        "negative": "ugly, deformed, noisy, blurry, low contrast",
+        "prompt": "(Studio Ghibli style:1.3), anime illustration, hand drawn, full body character visible head to toe, naturalistic proportions with expressive large eyes and soft facial features, precise pose showing weight and intention body leaning or reaching or resting, nuanced facial expression eyes conveying warmth curiosity or melancholy, detailed clothing fabric folds cloth movement, lush organic environment wind-swept grass towering trees wooden structures sky clouds, warm ambient lighting golden hour or soft overcast, foreground midground background depth layering, painterly soft shading, cinematic wide composition, intricate scene details foliage water reflections dust motes, masterpiece, best quality, highly detailed",
+        "negative": "ugly, deformed, noisy, blurry, low contrast, stiff pose, blank expression, missing limbs, floating figure, flat background, harsh lines, western cartoon, realistic photograph, 3d render, oversaturated, grimdark",
     },
     "cinematic": {
         "name": "Cinematic Digital Art",
@@ -81,8 +81,13 @@ ART_STYLES = {
     },
     "storybook": {
         "name": "Children's Storybook",
-        "prompt": "children's book illustration, whimsical art style, soft pastel colors, warm and inviting, storybook aesthetic, gentle lighting, fairy tale atmosphere",
-        "negative": "scary, dark, realistic, photograph, 3d render",
+        "prompt": "children's book illustration, whimsical art style, soft pastel watercolor palette, warm golden lighting, rounded chunky character with full body visible head to toe, large expressive eyes conveying clear emotion, exaggerated playful pose arms wide or crouched or jumping, simple clothing with cute details buttons patches patterns, cozy inviting environment with recognizable props trees cottage mushrooms toys, storybook page composition with foreground midground depth, gentle soft shadows, fairy tale atmosphere, Beatrix Potter or Eric Carle inspired, masterpiece, best quality, highly detailed",
+        "negative": "scary, dark, realistic, photograph, 3d render, stiff pose, blank expression, realistic proportions, thin limbs, missing face, floating figure, busy cluttered background, harsh shadows, muted colors, grotesque",
+    },
+    "adult_literary": {
+        "name": "Prestige Literary",
+        "prompt": "fine art book illustration, painterly texture, sophisticated muted limited palette, gallery-quality composition, precise character pose with weight and intention, expressive face with nuanced emotion subtle tension in brow and eyes, detailed hands gripping or gesturing meaningfully, environment elements grounding the figure in physical space, moody directional lighting casting soft shadows, contemplative introspective atmosphere, subtle visual symbolism layered into scene details, Edward Hopper or Kathe Kollwitz inspired, masterpiece, best quality, highly detailed",
+        "negative": "garish, cartoonish, childish, oversaturated, simplistic, stiff pose, blank expression, flat lighting, missing hands, floating figure, stock photo composition, cheerful bright colors, anime, sketch, blurry",
     },
     "realistic": {
         "name": "Photorealistic",
@@ -91,18 +96,13 @@ ART_STYLES = {
     },
     "stickfigure": {
         "name": "Expressive Character Study",
-        "prompt": "character study sheet, fleshed-out minimalist character, wearing a hoodie and sneakers, multiple highly expressive faces, grid of exaggerated facial expressions (happy, sad, angry, surprised), dynamic body language, clean bold black outlines on white background, modern webcomic style illustration, flat black and white line art, stylized human shape, clear and distinct strokes",
-        "negative": "neutral expression, blank face, emotionless, thin lines, single continuous line drawing, stick thin, crude hand-drawn doodle, realistic anatomy, detailed, photograph, complex, shading, 3d render, color, painting, messy, scratchy"
-    },
-    "stickfigure": {
-        "name": "Stick Figure",
-        "prompt": "expressive stick figure character, {action} pose, {emotion} facial expression, interacting with {object}, bold confident black ink lines on clean white background, hand-drawn marker style, varied line weight thicker at joints and torso thinner at limb ends, circular head with clear eyes eyebrows and mouth showing emotion, dynamic full-body gesture and motion lines, well-proportioned limbs roughly 1:1 head-to-body ratio typical of gesture-doodle stick figures, clear joint dots at shoulders elbows hips and knees, object rendered in same simple line style and correct scale relative to figure, whiteboard illustration style, clean line work, storytelling illustration, single continuous scene",
-        "negative": "realistic, detailed anatomy, photograph, complex shading, 3d render, full color, painting, messy scribble, single continuous one-line drawing, blurry, low quality, distorted proportions, extra limbs, floating disconnected object, mismatched scale, stiff T-pose, blank expressionless face",
+        "prompt": "expressive minimalist character illustration, bold thick black outlines on white background, simplified human figure with visible torso chest arms legs and head, chunky rounded limbs, proper head-body-limb proportions, full body visible from head to toe, dynamic exaggerated pose showing clear emotion through body language, tilted head leaning torso outstretched arms bent knees, large expressive face with thick eyebrows wide eyes open mouth, exaggerated facial features conveying strong emotion, visible clothing details hoodie jacket sneakers simple folds, scene-specific hand gestures and foot placement, flat black and white line art, webcomic illustration style, Scott Pilgrim style character, clean confident linework, no stray lines",
+        "negative": "stick figure, single line limbs, wire frame body, no torso, missing body parts, headless, limbless, neutral expression, blank face, flat emotion, thin lines, crude doodle, realistic anatomy, photograph, 3d render, color, painting, shading, gradient, messy scratchy lines, floating body parts, disproportionate tiny head"
     },
     "sketch": {
         "name": "Pencil Sketch Drawing",
-        "prompt": "Pencil Sketch Drawing, <lora:animeoutlineV4_16:1>, black and white drawing, graphite drawing",
-        "negative": "ugly, deformed, noisy, blurry, low contrast",
+        "prompt": "Pencil Sketch Drawing, <lora:animeoutlineV4_16:1>, black and white drawing, graphite drawing, detailed pencil linework, expressive character pose, clear body language, precise facial expression, gestural hatching, fine texture detail, dynamic composition",
+        "negative": "ugly, deformed, noisy, blurry, low contrast, color, painting, flat, stiff pose, neutral expression, faceless",
         "sd_override": {
             "steps": 8,
             "sampler_name": "DPM++ 2M",
@@ -161,40 +161,59 @@ def _cache_image(key: str, source_path: str) -> None:
     shutil.copy2(source_path, dest)
 
 
-def _enhance_prompt_with_llm(scene_text: str, search_query: str, art_style: str = "", category: str = "") -> str:
-    """Use LLM to generate a detailed image generation prompt from the scene."""
-    # Resolve style from category if not explicitly set
+def _enhance_prompt_with_llm(
+    scene_text: str,
+    search_query: str,
+    art_style: str = "",
+    category: str = "",
+    mood: str = "",
+    orientation: str = "portrait",
+) -> str:
+    """Use LLM to generate a detailed image prompt grounded in the narration text."""
     style_key = art_style
     if not style_key and category and category in CATEGORY_STYLES:
         style_key = CATEGORY_STYLES[category]["style"]
     style = ART_STYLES.get(style_key, ART_STYLES.get("cinematic"))
 
-    cache_input = f"imgprompt:{style_key}:{category}:{scene_text}:{search_query}"
+    cache_input = f"imgprompt:{style_key}:{category}:{mood}:{orientation}:{scene_text}:{search_query}"
     cached = cache_get("imagegen", _cache_key(cache_input))
     if cached is not None:
         print(f"      [Prompt cached]")
         return cached
 
     mood_hint = ""
-    if category and category in CATEGORY_STYLES:
-        mood_hint = f"\nMood/atmosphere: {CATEGORY_STYLES[category]['mood']}"
+    if mood:
+        mood_hint = f"Scene mood: {mood}\n"
+    elif category and category in CATEGORY_STYLES:
+        mood_hint = f"Scene mood/atmosphere: {CATEGORY_STYLES[category]['mood']}\n"
+
+    orientation_hint = {
+        "portrait":  "Portrait orientation (taller than wide, vertical format)",
+        "landscape": "Landscape orientation (wider than tall, horizontal format)",
+        "square":    "Square format (equal width and height)",
+    }.get(orientation, "Portrait orientation (taller than wide)")
 
     prompt = (
         f"You are an expert at writing prompts for AI image generators (Stable Diffusion, DALL-E).\n\n"
-        f"Given this narration line from a short video, write a detailed image prompt.\n\n"
-        f"Narration: \"{scene_text}\"\n"
-        f"Visual hint: \"{search_query}\"\n"
+        f"Your task: create a vivid image prompt that visually illustrates exactly what the narrator is saying.\n\n"
+        f"Narration (PRIMARY source — illustrate this literally): \"{scene_text}\"\n"
+        f"Supporting visual hint (secondary, use only if narration is too abstract): \"{search_query}\"\n"
         f"Art style: {style['name']}\n"
         f"Style tags to include: {style['prompt']}\n"
-        f"{mood_hint}\n\n"
-        f"Rules:\n"
-        f"- Describe the SCENE CONTENT first (what is depicted), then the art style\n"
-        f"- The style tags MUST appear in your prompt — they define the look\n"
-        f"- Describe specific visual elements: subjects, composition, lighting, atmosphere\n"
-        f"- Portrait orientation (taller than wide)\n"
-        f"- No text, words, letters, or watermarks in the image\n"
-        f"- For Stable Diffusion: put the most important terms first, use commas to separate concepts\n"
-        f"- End with quality tags: masterpiece, best quality, highly detailed\n"
+        f"{mood_hint}"
+        f"\nRules:\n"
+        f"- The image must depict what the narration describes — a viewer should feel they are seeing the words\n"
+        f"- Describe in this order: (1) subject & pose — exact body position, stance, hand placement, angle; "
+        f"(2) facial expression — eyes, brow, mouth, emotion conveyed; "
+        f"(3) action & scene elements — what objects, environment, props are present and their spatial relationship; "
+        f"(4) lighting & atmosphere; (5) style tags\n"
+        f"- Be specific about pose: e.g. 'leaning forward with both hands on desk, head tilted slightly down' not just 'standing'\n"
+        f"- Be specific about expression: e.g. 'furrowed brows, tight lips, downcast eyes showing worry' not just 'sad'\n"
+        f"- The style tags MUST appear in your prompt\n"
+        f"- {orientation_hint}\n"
+        f"- No text, words, letters, or watermarks\n"
+        f"- For Stable Diffusion: most important terms first, comma-separated\n"
+        f"- End with: masterpiece, best quality, highly detailed\n"
         f"- Keep it under 150 words\n\n"
         f"Return ONLY the image prompt, nothing else."
     )
@@ -289,6 +308,22 @@ def _ensure_sd_model() -> None:
 
 def generate_stable_diffusion(prompt: str, output_path: str, width: int = SD_WIDTH, height: int = SD_HEIGHT, negative_prompt: str = "", sd_override: Optional[dict] = None) -> bool:
     """Generate an image using Stable Diffusion (local API — automatic1111/ComfyUI/Forge)."""
+    return generate_stable_diffusion_with_reference(
+        prompt, output_path, width=width, height=height,
+        negative_prompt=negative_prompt, sd_override=sd_override,
+    )
+
+
+def generate_stable_diffusion_with_reference(
+    prompt: str,
+    output_path: str,
+    width: int = SD_WIDTH,
+    height: int = SD_HEIGHT,
+    negative_prompt: str = "",
+    sd_override: Optional[dict] = None,
+    reference_image_path: str = "",
+) -> bool:
+    """Generate an SD image, optionally injecting a reference image via IP-Adapter FaceID."""
     import base64
 
     _ensure_sd_model()
@@ -310,6 +345,22 @@ def generate_stable_diffusion(prompt: str, output_path: str, width: int = SD_WID
 
     if sd_override:
         payload.update(sd_override)
+
+    if reference_image_path and os.path.exists(reference_image_path):
+        with open(reference_image_path, "rb") as f:
+            ref_b64 = base64.b64encode(f.read()).decode()
+        payload["alwayson_scripts"] = {
+            "IP-Adapter": {
+                "args": [{
+                    "enabled": True,
+                    "image": ref_b64,
+                    "model": "ip-adapter-faceid-plusv2_sd15",
+                    "weight": 0.7,
+                    "start": 0.0,
+                    "end": 1.0,
+                }]
+            }
+        }
 
     try:
         data = json.dumps(payload).encode()
@@ -452,9 +503,12 @@ def generate_scene_image(
     provider: str = "openai",
     art_style: str = "",
     category: str = "",
+    mood: str = "",
+    orientation: str = "portrait",
+    character_name: str = "",
 ) -> bool:
     """Generate an AI illustration for a scene. Uses cache to avoid duplicate requests."""
-    img_cache_key = _cache_key(f"img:{provider}:{art_style}:{category}:{scene_text}:{search_query}")
+    img_cache_key = _cache_key(f"img:{provider}:{art_style}:{category}:{mood}:{orientation}:{character_name}:{scene_text}:{search_query}")
     cached_path = _get_cached_image(img_cache_key)
     if cached_path:
         print(f"      [Cached image found]")
@@ -468,6 +522,15 @@ def generate_scene_image(
     style = ART_STYLES.get(style_key)
     neg = style["negative"] + ", text, watermark, nsfw" if style else ""
 
+    # Resolve character reference image
+    reference_image_path = ""
+    if character_name:
+        from .character import get_library
+        char = get_library().get(character_name)
+        if char and char.portrait_path and os.path.exists(char.portrait_path):
+            reference_image_path = char.portrait_path
+            print(f"      Using character reference: {character_name}")
+
     # Check if search_query is already a detailed SD prompt (from scriptgen)
     is_detailed = ":1." in search_query or (len(search_query) > 80 and search_query.count(",") > 3)
 
@@ -478,17 +541,25 @@ def generate_scene_image(
         print(f"      Using script visual directly")
         print(f"      Prompt: {image_prompt[:120]}...")
     else:
-        print(f"      Generating image prompt with AI...")
-        image_prompt = _enhance_prompt_with_llm(scene_text, search_query, art_style=art_style, category=category)
+        print(f"      Generating image prompt from narration...")
+        image_prompt = _enhance_prompt_with_llm(
+            scene_text, search_query,
+            art_style=art_style, category=category,
+            mood=mood, orientation=orientation,
+        )
         print(f"      Prompt: {image_prompt[:120]}...")
 
     if provider == "openai":
-        print(f"      Generating with OpenAI...")
+        print(f"      Generating with OpenAI...", image_prompt)
         success = generate_openai(image_prompt, output_path)
     elif provider == "sd":
         print(f"      Generating with Stable Diffusion...")
         sd_over = style.get("sd_override") if style else None
-        success = generate_stable_diffusion(image_prompt, output_path, negative_prompt=neg, sd_override=sd_over)
+        success = generate_stable_diffusion_with_reference(
+            image_prompt, output_path,
+            negative_prompt=neg, sd_override=sd_over,
+            reference_image_path=reference_image_path,
+        )
     else:
         print(f"      Unknown provider: {provider}")
         return False
