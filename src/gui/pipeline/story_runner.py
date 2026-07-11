@@ -12,7 +12,7 @@ from ...config import settings
 from ...narration import (
     POPULAR_VOICES, MOOD_VOICE_SETTINGS,
     generate_narration, generate_silence, is_silent_scene,
-    _tts_cache_key, _cache_hit,
+    _cache_key as _tts_cache_key, cache_hit as _cache_hit,
 )
 from ...story import (
     Scene, BubbleGroup, MOOD_PRESETS, VOICE_MUSIC_MAP, ANIMATION_PRESETS,
@@ -56,6 +56,7 @@ class StorySession:
     footnote: str = ""
     output_filename: str = ""  # empty = auto-generated from script
     use_tts_cache: bool = True
+    use_image_cache: bool = True
     orientation: str = "portrait"  # portrait | landscape | square
     ending_gap: float = 2.0        # extra silence (seconds) appended after the last scene
     gallery_folder: str = ""          # non-empty only when visuals == "gallery"
@@ -323,8 +324,9 @@ def _generate_one_visual(session, i, scene, visual_path, video_path, styled_quer
                                     category=session.image_category,
                                     mood=getattr(scene, "mood", ""),
                                     orientation=session.orientation,
-                                    character_name=session.character_name):
-                if session.caption_style == "bubble":
+                                    character_name=session.character_name,
+                                    use_cache=session.use_image_cache):
+                if session.caption_style in ("bubble", "head"):
                     scene.head_pos = detect_head_position(
                         ai_img_path, video_w=settings.vertical_width, video_h=settings.vertical_height,
                     )
@@ -356,7 +358,7 @@ def _generate_one_visual(session, i, scene, visual_path, video_path, styled_quer
     if not got_visual:
         img_path = visual_path + ".jpg"
         if _download_scene_image(styled_query, img_path):
-            if session.caption_style == "bubble" and not scene.head_pos:
+            if session.caption_style in ("bubble", "head") and not scene.head_pos:
                 scene.head_pos = detect_head_position(
                     img_path, video_w=settings.vertical_width, video_h=settings.vertical_height,
                 )
@@ -488,6 +490,8 @@ def execute_phase4(session: StorySession) -> str:
             if words:
                 if session.caption_style == "bubble":
                     _burn_bubble_captions(session, final_path, words)
+                elif session.caption_style == "head":
+                    _burn_head_captions(session, final_path, words)
                 else:
                     ass_path = os.path.join(session.output_dir, "story_captions.ass")
                     build_ass(words, clip_start=0.0, output_path=ass_path,
@@ -535,6 +539,104 @@ def execute_phase4(session: StorySession) -> str:
     session.final_video_path = final_path
     print(f"\n-> Story video saved: {final_path}")
     return final_path
+
+
+def _burn_head_captions(session: StorySession, final_path: str, words):
+    """Like default captions but with \pos(x,y) per scene anchored above the tagged head."""
+    scenes = session.scenes
+    xfade_dur = 0.8 if len(scenes) > 1 else 0.0
+    cumulative = 0.0
+    scene_times = []
+    for i, s in enumerate(scenes):
+        s_start = cumulative
+        s_end = cumulative + s.duration
+        if i > 0:
+            s_start += xfade_dur / 2
+        if i < len(scenes) - 1:
+            s_end -= xfade_dur / 2
+        scene_times.append((s_start, s_end))
+        cumulative += s.duration
+        if i < len(scenes) - 1:
+            cumulative -= xfade_dur
+
+    # Auto-detect head for scenes not already tagged
+    for i, scene in enumerate(scenes):
+        if scene.head_pos is None and i < len(session.scene_img_paths):
+            img = session.scene_img_paths[i]
+            if img and os.path.exists(img):
+                scene.head_pos = detect_head_position(
+                    img, video_w=settings.vertical_width, video_h=settings.vertical_height,
+                )
+
+    canvas_w = settings.vertical_width
+    cx = canvas_w // 2
+    CAPTION_PADDING = 30
+
+    # Build a word→scene_idx lookup so each word gets the right pos_tag
+    word_pos_tag = {}
+    for scene_idx, (s_start, s_end) in enumerate(scene_times):
+        head_pos = scenes[scene_idx].head_pos if scene_idx < len(scenes) else None
+        if head_pos:
+            pos_y = head_pos[1] - CAPTION_PADDING
+            tag = f"{{\\pos({cx},{pos_y})}}"
+        else:
+            tag = ""
+        for w in words:
+            if w.start >= s_start and w.end <= s_end:
+                word_pos_tag[id(w)] = tag
+
+    # Write one ASS file using build_ass with clip_start=0 (same as default style),
+    # then patch each Dialogue line to prepend the correct \pos tag.
+    import tempfile
+    tmp_ass = os.path.join(session.output_dir, "_head_tmp.ass")
+    build_ass(words, clip_start=0.0, output_path=tmp_ass,
+              caption_font=session.caption_font,
+              caption_animation=session.caption_animation)
+
+    # Read the generated ASS and inject \pos tags.
+    # Each Dialogue line's start time identifies which scene it belongs to.
+    with open(tmp_ass, encoding="utf-8") as f:
+        raw_lines = f.readlines()
+
+    def _parse_ass_time(t: str) -> float:
+        h, m, s = t.split(":")
+        return int(h) * 3600 + int(m) * 60 + float(s)
+
+    # Build a time→pos_tag map from scene_times
+    def _pos_tag_for_time(t: float) -> str:
+        for scene_idx, (s_start, s_end) in enumerate(scene_times):
+            if s_start <= t <= s_end:
+                head_pos = scenes[scene_idx].head_pos if scene_idx < len(scenes) else None
+                if head_pos:
+                    pos_y = head_pos[1] - CAPTION_PADDING
+                    return f"{{\\pos({cx},{pos_y})}}"
+                return ""
+        return ""
+
+    out_lines = []
+    for line in raw_lines:
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                start_t = _parse_ass_time(parts[1].strip())
+                tag = _pos_tag_for_time(start_t)
+                if tag:
+                    parts[9] = tag + parts[9]
+                    line = ",".join(parts)
+        out_lines.append(line)
+
+    ass_path = os.path.join(session.output_dir, "story_captions_head.ass")
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.writelines(out_lines)
+
+    os.unlink(tmp_ass)
+
+    captioned_path = final_path + ".captioned.mp4"
+    burn_captions(final_path, ass_path, captioned_path)
+    os.replace(captioned_path, final_path)
+
+    detected = sum(1 for s in scenes if s.head_pos)
+    print(f"   Burned head-position captions ({detected}/{len(scenes)} heads tagged/detected)")
 
 
 def _burn_bubble_captions(session: StorySession, final_path: str, words):

@@ -88,17 +88,17 @@ def _reframe_blur(
 
 
 def burn_captions(input_path: str, ass_path: str, output_path: str) -> None:
-    import os
-    cwd = os.path.dirname(os.path.abspath(ass_path))
-    ass_filename = os.path.basename(ass_path)
+    # Use subtitles= (not ass=) so that inline override tags like \pos are honoured.
+    # Escape colons and backslashes in the path for the ffmpeg filter string.
+    abs_ass = os.path.abspath(ass_path)
+    escaped = abs_ass.replace("\\", "/").replace(":", "\\:")
     _run(
         [
             FFMPEG, "-y", "-i", os.path.abspath(input_path),
-            "-vf", f"ass={ass_filename}",
+            "-vf", f"subtitles={escaped}",
             "-c:a", "copy",
             os.path.abspath(output_path),
         ],
-        cwd=cwd,
     )
 
 

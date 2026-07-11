@@ -28,7 +28,7 @@ FILM_GRAIN_CHOICES = [
 
 VISUAL_SOURCE_CHOICES = ["download", "openai", "sd", "veo", "gallery"]
 
-CAPTION_STYLE_CHOICES = ["default", "bubble"]
+CAPTION_STYLE_CHOICES = ["default", "head", "bubble"]
 
 CAPTION_FONT_CHOICES_GUI = [""] + CAPTION_FONT_CHOICES
 

@@ -47,6 +47,7 @@ def create_scriptgen_tab(story_script_box=None):
 
             with gr.Row():
                 duration = gr.Slider(label="Duration (seconds)", minimum=30, maximum=180, step=10, value=60)
+                scene_count = gr.Slider(label="Scenes (0 = auto)", minimum=0, maximum=20, step=1, value=0)
                 tone = gr.Textbox(label="Tone", value="reflective and powerful")
 
             with gr.Row():
@@ -70,7 +71,7 @@ def create_scriptgen_tab(story_script_box=None):
             script_output = gr.Textbox(label="Generated Script", lines=20, interactive=True)
             save_status = gr.Textbox(label="Save Status", lines=1, interactive=False)
 
-    def generate(topic_val, cat, style, dur, tone_val, char, bg, extra_val, folder_val, do_autosave, do_overwrite):
+    def generate(topic_val, cat, style, dur, scene_count_val, tone_val, char, bg, extra_val, folder_val, do_autosave, do_overwrite):
         if not topic_val.strip():
             yield "Please enter a topic.", "", "", gr.update()
             return
@@ -89,6 +90,7 @@ def create_scriptgen_tab(story_script_box=None):
                         tone=tone_val or "reflective and powerful",
                         character=char or "", background=bg or "",
                         extra_instructions=extra_val or "",
+                        scene_count=int(scene_count_val),
                     )
                 except Exception as e:
                     error[0] = e
@@ -119,7 +121,7 @@ def create_scriptgen_tab(story_script_box=None):
 
     gen_btn.click(
         generate,
-        inputs=[topic, category, art_style, duration, tone, character, background, extra, save_folder, auto_save, overwrite],
+        inputs=[topic, category, art_style, duration, scene_count, tone, character, background, extra, save_folder, auto_save, overwrite],
         outputs=[log_box, script_output, save_status, save_btn],
     )
 

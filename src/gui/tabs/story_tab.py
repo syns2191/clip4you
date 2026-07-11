@@ -99,6 +99,9 @@ def create_story_tab():
             with gr.Row():
                 use_tts_cache = gr.Checkbox(label="Use voice cache", value=True)
                 gr.Markdown("<small>Uncheck to regenerate all voices from scratch</small>")
+            with gr.Row():
+                use_image_cache = gr.Checkbox(label="Use image cache", value=True)
+                gr.Markdown("<small>Uncheck to regenerate all images from scratch</small>")
 
             start_btn = gr.Button("Start Story Pipeline", variant="primary", size="lg")
             cancel_btn = gr.Button("Cancel", variant="stop", size="lg", visible=False)
@@ -310,7 +313,7 @@ def create_story_tab():
         orientation_val, visuals_val, art_val, cat_val,
         anim_val, grain_val, cap_style, cap_font, cap_anim,
         hook_val, footnote_val, out_filename, ending_gap_val, music_f, music_vol, auto_mus,
-        tts_cache_val, gallery_folder_val, char_name_val,
+        tts_cache_val, image_cache_val, gallery_folder_val, char_name_val,
     ):
         # Empty wizard outputs placeholder (7 values)
         empty_wiz = ("...", "...", [], 0, 0, "", "")
@@ -346,6 +349,7 @@ def create_story_tab():
             hook_text=hook_val or "", footnote=footnote_val.replace("\\n", "\n") if footnote_val else "",
             output_filename=out_filename or "",
             use_tts_cache=bool(tts_cache_val),
+            use_image_cache=bool(image_cache_val),
             orientation=orientation_val or "portrait",
             ending_gap=float(ending_gap_val or 2.0),
             gallery_folder=gallery_folder_val or "",
@@ -416,7 +420,7 @@ def create_story_tab():
             orientation, visuals, art_style, image_category, animation, film_grain,
             caption_style, caption_font, caption_animation,
             hook_text, footnote, output_filename, ending_gap, music_file, music_volume, auto_music,
-            use_tts_cache, gallery_folder_input, character_name,
+            use_tts_cache, use_image_cache, gallery_folder_input, character_name,
         ],
         outputs=all_phase_outputs,
     )
