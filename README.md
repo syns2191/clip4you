@@ -1,4 +1,4 @@
-# storyhero-mvp
+# Clip4You
 
 A minimal, working clone of the StoryHero pipeline: feed it a long video
 (stream VOD, podcast, YouTube video) and it transcribes it, asks an LLM to
